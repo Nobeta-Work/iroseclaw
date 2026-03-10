@@ -41,26 +41,7 @@ function isBlockedHost(hostname, blockedHosts) {
 function normalizeQueryCandidates(emotion, styleKeyword) {
   const mood = (emotion || '').trim();
   const base = mood || '表情包';
-
-  const dictionary = {
-    开心: ['开心 圣女 表情包', '高兴 圣女 表情包', 'happy saint meme'],
-    难过: ['难过 圣女 表情包', '伤心 圣女 表情包', 'sad saint meme'],
-    生气: ['生气 圣女 表情包', '愤怒 圣女 表情包', 'angry saint meme'],
-    惊讶: ['惊讶 圣女 表情包', '震惊 圣女 表情包', 'surprised saint meme'],
-    无语: ['无语 圣女 表情包', '尴尬 圣女 表情包', 'awkward saint meme'],
-    疑惑: ['疑惑 圣女 表情包', '问号 圣女 表情包', 'confused saint meme'],
-    调皮: ['调皮 圣女 表情包', '坏笑 圣女 表情包', 'mischievous saint meme'],
-    安慰: ['安慰 圣女 表情包', '抱抱 圣女 表情包', 'comfort saint meme']
-  };
-
-  const mapped = dictionary[mood] || [];
-  const list = [
-    `${base} 表情包`,
-    `${base} ${styleKeyword} 表情包`,
-    `${styleKeyword} ${base} 表情包`,
-    `${base} 圣女 表情包`,
-    ...mapped
-  ];
+  const list = [`${base} 动漫 可爱`];
 
   const unique = [];
   for (const item of list) {
@@ -138,7 +119,7 @@ function decodeHtmlEntities(value) {
 }
 
 async function searchBingImage(query, timeoutMs, blockedHosts) {
-  const first = Math.floor(Math.random() * 5) + 1;
+  const first = Math.floor(Math.random() * 16) + 1;
   const params = new URLSearchParams({ q: query, form: 'HDRSC2', first: String(first) });
   const html = await fetchTextWithTimeout(`https://cn.bing.com/images/search?${params.toString()}`, timeoutMs, {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
