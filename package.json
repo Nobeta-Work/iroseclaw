@@ -1,0 +1,25 @@
+{
+  "name": "iroseclaw",
+  "version": "0.1.0",
+  "description": "IIROSE chatbot powered by OpenClaw — extensible Koishi plugin framework",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "koishi start",
+    "test": "node tests/run.js",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "iirose",
+    "koishi",
+    "openclaw",
+    "chatbot",
+    "ai"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@koishijs/plugin-http": "^0.6.3",
+    "@koishijs/plugin-proxy-agent": "^0.3.3",
+    "koishi": "^4.18.0",
+    "koishi-plugin-adapter-iirose": "^0.12.0"
+  }
+}
