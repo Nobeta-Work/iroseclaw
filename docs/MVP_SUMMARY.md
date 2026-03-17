@@ -10,7 +10,7 @@
 
 ### 1. 配置文件修复
 
-#### `config/bot.json` (完全重写)
+#### `config/app.json` (完全重写)
 - ✅ 设置 `bot.uid=<BOT_UID>`
 - ✅ 设置 `bot.name=<BOT_NAME>`
 - ✅ 设置 `roomId=<ROOM_ID>`
@@ -49,7 +49,7 @@
 ### 3. 新建入口文件
 
 #### `src/index.js` (新建)
-- ✅ 读取 `config/bot.json`
+- ✅ 读取 `config/app.json`
 - ✅ 初始化 `logger`、`OpenClawAdapter`、`SkillManager`
 - ✅ 调用 `loadBuiltin()` + `loadScripts()`
 - ✅ 创建 `messageHandler`
@@ -75,7 +75,7 @@
 ## 📁 关键文件列表
 
 ### 配置文件
-- `config/bot.json` - 机器人配置（已修复）
+- `config/app.json` - 机器人配置（已修复）
 
 ### 核心模块
 - `src/index.js` - 主入口（新建）
@@ -115,7 +115,7 @@ node tests/load-test.js
 
 **结果**: 10/10 测试通过
 
-1. ✅ Load config/bot.json
+1. ✅ Load config/app.json
 2. ✅ Load OpenClawAdapter
 3. ✅ Load SkillManager
 4. ✅ Load built-in skills (help, music, chat)
@@ -136,7 +136,7 @@ node tests/load-test.js
 // 在 Koishi 配置中
 plugins:
   iirose-claw:
-    # 插件配置（可选，会覆盖 bot.json）
+    # 插件配置（可选，会覆盖 app.json）
     bot:
       name: YourBotName
 ```

@@ -8,6 +8,15 @@ const fs = require('fs');
 const path = require('path');
 
 const LOGS_DIR = path.join(process.cwd(), 'logs', 'audit');
+const LOG_FILE_NAME = process.env.IROSE_AUDIT_LOG_FILE || 'audit.log.jsonl';
+const LOG_FILE_PATH = path.join(LOGS_DIR, LOG_FILE_NAME);
+const MAX_AUDIT_LOG_BYTES = toPositiveInt(process.env.IROSE_AUDIT_LOG_MAX_BYTES, 8 * 1024 * 1024);
+const TARGET_AUDIT_LOG_BYTES = Math.min(
+  MAX_AUDIT_LOG_BYTES,
+  toPositiveInt(process.env.IROSE_AUDIT_LOG_TARGET_BYTES, Math.floor(MAX_AUDIT_LOG_BYTES * 0.75))
+);
+const COMPACT_CHECK_INTERVAL = toPositiveInt(process.env.IROSE_AUDIT_LOG_COMPACT_INTERVAL, 50);
+let writeCount = 0;
 
 /**
  * 确保日志目录存在
@@ -19,14 +28,11 @@ const ensureLogDir = () => {
 };
 
 /**
- * 获取今日日志文件路径
+ * 获取审计日志文件路径
  * @returns {string} - 日志文件路径
  */
 const getTodayLogPath = () => {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  return path.join(LOGS_DIR, `${dateStr}.jsonl`);
+  return LOG_FILE_PATH;
 };
 
 /**
@@ -35,18 +41,13 @@ const getTodayLogPath = () => {
  * @param {Object} response - 响应对象
  */
 const logRequest = (request, response) => {
-  ensureLogDir();
-  
-  const logPath = getTodayLogPath();
   const logEntry = {
     timestamp: Date.now(),
     type: 'request_response',
     request,
     response
   };
-  
-  const line = JSON.stringify(logEntry) + '\n';
-  fs.appendFileSync(logPath, line, 'utf8');
+  appendAuditLine(logEntry);
 };
 
 /**
@@ -56,9 +57,6 @@ const logRequest = (request, response) => {
  * @param {string} reason - 拒绝原因
  */
 const logPermissionDenied = (userId, action, reason) => {
-  ensureLogDir();
-  
-  const logPath = getTodayLogPath();
   const logEntry = {
     timestamp: Date.now(),
     type: 'permission_denied',
@@ -66,9 +64,7 @@ const logPermissionDenied = (userId, action, reason) => {
     action,
     reason
   };
-  
-  const line = JSON.stringify(logEntry) + '\n';
-  fs.appendFileSync(logPath, line, 'utf8');
+  appendAuditLine(logEntry);
 };
 
 /**
@@ -77,18 +73,82 @@ const logPermissionDenied = (userId, action, reason) => {
  * @param {Object} data - 事件数据
  */
 const logEvent = (type, data) => {
-  ensureLogDir();
-  
-  const logPath = getTodayLogPath();
   const logEntry = {
     timestamp: Date.now(),
     type,
     ...data
   };
-  
-  const line = JSON.stringify(logEntry) + '\n';
-  fs.appendFileSync(logPath, line, 'utf8');
+  appendAuditLine(logEntry);
 };
+
+const appendAuditLine = (entry) => {
+  ensureLogDir();
+  const line = `${JSON.stringify(entry)}\n`;
+  fs.appendFileSync(LOG_FILE_PATH, line, 'utf8');
+  compactAuditLogIfNeeded();
+};
+
+const compactAuditLogIfNeeded = () => {
+  writeCount += 1;
+  if (writeCount % COMPACT_CHECK_INTERVAL !== 0) {
+    return;
+  }
+
+  let stat = null;
+  try {
+    stat = fs.statSync(LOG_FILE_PATH);
+  } catch {
+    return;
+  }
+  if (!stat || stat.size <= MAX_AUDIT_LOG_BYTES) {
+    return;
+  }
+
+  let content = '';
+  try {
+    content = fs.readFileSync(LOG_FILE_PATH, 'utf8');
+  } catch {
+    return;
+  }
+
+  const lines = content.split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) {
+    return;
+  }
+
+  const retained = [];
+  let bytes = 0;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    const lineBytes = Buffer.byteLength(line, 'utf8') + 1;
+    if (retained.length > 0 && bytes + lineBytes > TARGET_AUDIT_LOG_BYTES) {
+      break;
+    }
+    retained.push(line);
+    bytes += lineBytes;
+  }
+  retained.reverse();
+
+  const nextContent = retained.map(line => `${line}\n`).join('');
+  const tempPath = `${LOG_FILE_PATH}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, nextContent, 'utf8');
+    fs.renameSync(tempPath, LOG_FILE_PATH);
+  } catch {
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+};
+
+function toPositiveInt(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.floor(num) : fallback;
+}
 
 module.exports = {
   logRequest,
@@ -96,5 +156,6 @@ module.exports = {
   logEvent,
   ensureLogDir,
   getTodayLogPath,
-  LOGS_DIR
+  LOGS_DIR,
+  LOG_FILE_PATH
 };

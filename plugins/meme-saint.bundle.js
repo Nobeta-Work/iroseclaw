@@ -12,7 +12,7 @@ function getTimeoutMs() {
 }
 
 function getStyleKeyword() {
-  return (process.env.IROSE_MEME_STYLE_KEYWORD || '圣女').trim() || '圣女';
+  return (process.env.IROSE_MEME_STYLE_KEYWORD || '楠娘').trim() || '楠娘';
 }
 
 function getBlockedHostPatterns() {
@@ -223,7 +223,7 @@ async function searchMemeByEmotion(emotion, timeoutMs) {
 module.exports = {
   name: 'meme',
   keywords: [],
-  description: '根据情绪检索圣女表情包（remote bundle）',
+  description: '根据情绪检索楠娘表情包（remote bundle）',
   handler: async ({ args }) => {
     const parsed = parseMemePayload(args?.format || args?.query || args?.raw || '');
     const emotion = (args?.emotion || parsed.emotion || '').trim();

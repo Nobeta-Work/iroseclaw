@@ -19,7 +19,7 @@ function getStyleKeyword(styleKeyword) {
   if (typeof styleKeyword === 'string' && styleKeyword.trim()) {
     return styleKeyword.trim();
   }
-  return (process.env.IROSE_MEME_STYLE_KEYWORD || '圣女').trim() || '圣女';
+  return (process.env.IROSE_MEME_STYLE_KEYWORD || '楠娘').trim() || '楠娘';
 }
 
 function getBlockedHostPatterns(blockedHosts) {

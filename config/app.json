@@ -1,0 +1,187 @@
+{
+  "bot": {
+    "uid": "your_bot_uid",
+    "name": "YourBotName",
+    "platform": "iirose"
+  },
+  "roomId": "your_room_id",
+  "auth": {
+    "iiroseUsername": "your_bot_username",
+    "iirosePassword": "your_bot_password"
+  },
+  "admins": [
+    "your_admin_uid"
+  ],
+  "permissions": {
+    "default": {
+      "allowedActions": [
+        "chat",
+        "help",
+        "music"
+      ],
+      "blockedActions": [
+        "admin",
+        "system",
+        "config"
+      ]
+    },
+    "admin": {
+      "allowedActions": [
+        "chat",
+        "help",
+        "music",
+        "admin",
+        "system",
+        "config"
+      ],
+      "blockedActions": []
+    }
+  },
+  "runtime": {
+    "mode": "workflow",
+    "eventTriggersEnabled": false
+  },
+  "workflow": {
+    "maxSteps": 6,
+    "maxToolCallsPerStep": 4,
+    "allowParallelReadTools": true,
+    "promptProfile": {
+      "activeStyle": "plain",
+      "persist": true,
+      "stateFile": "data/runtime/workflow-prompt-profile.json",
+      "botProfile": {
+        "name": "IIROSE Claw",
+        "identity": "你是一个在 IIROSE 房间中协助聊天与工具编排的机器人助手。",
+        "extraInstruction": ""
+      },
+      "styles": {
+        "plain": {
+          "label": "平淡",
+          "instruction": "语气自然、克制、直接，不刻意卖萌，不夸张，不撒娇。",
+          "aliases": [
+            "平淡",
+            "普通",
+            "plain",
+            "normal"
+          ]
+        },
+        "warm": {
+          "label": "热情",
+          "instruction": "语气积极、友好、带一点情绪温度，但保持专业和边界。",
+          "aliases": [
+            "热情",
+            "积极",
+            "warm",
+            "enthusiastic"
+          ]
+        },
+        "affectionate": {
+          "label": "爱慕",
+          "instruction": "语气温柔亲近、偏暧昧，但保持安全合规，不进行露骨或越界表达。",
+          "aliases": [
+            "爱慕",
+            "暧昧",
+            "affectionate",
+            "romantic"
+          ]
+        }
+      }
+    }
+  },
+  "workflowRunLog": {
+    "enabled": true,
+    "dataDir": "data/workflow-runs",
+    "fileName": "workflow-runs.jsonl",
+    "maxBytes": 8388608,
+    "targetBytesAfterCompact": 6291456,
+    "compactCheckInterval": 20,
+    "persist": true
+  },
+  "openclaw": {
+    "subagentLabel": "iirose",
+    "timeout": 30000,
+    "stateless": true,
+    "useNativeSessionContext": false
+  },
+  "providers": {
+    "default": "openclaw",
+    "named": {
+      "analysis-http": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.example.com/v1",
+        "apiKey": "your_api_key",
+        "model": "gpt-4.1-mini",
+        "timeout": 30000,
+        "enabled": false
+      }
+    }
+  },
+  "music": {
+    "playUrlProviders": [
+      "iarcDirect",
+      "metingRedirect",
+      "neteaseOuter"
+    ],
+    "providers": {
+      "customTemplate": {
+        "enabled": false,
+        "urlTemplate": ""
+      },
+      "iarcDirect": {
+        "enabled": true,
+        "urlTemplate": "https://v.iarc.top/?type=url&id={{id}}#.mp3"
+      },
+      "metingRedirect": {
+        "enabled": true,
+        "endpointTemplate": "https://api.injahow.cn/meting/?server=netease&type=url&id={{id}}"
+      },
+      "neteaseOuter": {
+        "enabled": true,
+        "urlTemplate": "https://music.163.com/song/media/outer/url?id={{id}}.mp3"
+      }
+    }
+  },
+  "messageMemory": {
+    "enabled": true,
+    "dataDir": "data/message-memory",
+    "maxEventsPerChannel": 400,
+    "recentMessageCount": 20,
+    "maxAnchorRounds": 20,
+    "compactCheckInterval": 50,
+    "compactOnStartup": true,
+    "maxMessageChars": 180,
+    "persist": true
+  },
+  "meme": {
+    "enabled": true,
+    "triggerProbability": 0.5,
+    "requestEmotionTag": true
+  },
+  "remotePlugins": {
+    "entries": [
+      {
+        "url": "https://example.com/plugins/my-plugin.bundle.js",
+        "enabled": false,
+        "sha256": "",
+        "timeout": 10000
+      }
+    ],
+    "timeout": 10000,
+    "allowHttp": false
+  },
+  "pluginConfigs": {},
+  "fallbackResponses": [
+    "抱歉，我暂时无法处理这个请求。",
+    "出了点问题，请稍后再试。",
+    "我现在有点忙，晚点再聊吧。",
+    "这个功能暂时不可用。"
+  ],
+  "rateLimit": {
+    "perMinute": 60
+  },
+  "policy": {
+    "allowHighRiskTools": false,
+    "allowCrossSessionSend": false,
+    "maxMessagesPerWorkflow": 3
+  }
+}

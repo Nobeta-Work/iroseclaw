@@ -10,9 +10,7 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(PROJECT_ROOT, 'config');
 
 const CONFIG_PATHS = {
-  example: path.join(CONFIG_DIR, 'app.example.json'),
-  legacy: path.join(CONFIG_DIR, 'bot.json'),
-  local: path.join(CONFIG_DIR, 'app.local.json')
+  app: path.join(CONFIG_DIR, 'app.json')
 };
 
 const ENV_KEYS = [
@@ -21,8 +19,12 @@ const ENV_KEYS = [
   'IROSE_BOT_PLATFORM',
   'IROSE_ROOM_ID',
   'IROSE_ADMINS',
+  'IROSE_RUNTIME_MODE',
   'IROSE_OPENCLAW_SUBAGENT',
   'IROSE_OPENCLAW_TIMEOUT',
+  'IROSE_MEME_ENABLED',
+  'IROSE_MEME_TRIGGER_PROBABILITY',
+  'IROSE_MEME_REQUEST_EMOTION_TAG',
   'IROSE_RATE_LIMIT_PER_MINUTE',
   'IROSE_IIROSE_USERNAME',
   'IROSE_IIROSE_PASSWORD'
@@ -50,10 +52,106 @@ const DEFAULT_CONFIG = {
       blockedActions: []
     }
   },
+  runtime: {
+    mode: 'workflow',
+    eventTriggersEnabled: false
+  },
+  workflow: {
+    planner: 'llm-default',
+    maxSteps: 6,
+    maxToolCallsPerStep: 4,
+    allowParallelReadTools: true,
+    promptProfile: {
+      activeStyle: 'plain',
+      persist: true,
+      stateFile: 'data/runtime/workflow-prompt-profile.json',
+      botProfile: {
+        name: 'IIROSE Claw',
+        identity: '你是一个在 IIROSE 房间中协助聊天与工具编排的机器人助手。',
+        extraInstruction: ''
+      },
+      styles: {
+        plain: {
+          label: '平淡',
+          instruction: '语气自然、克制、直接，不刻意卖萌，不夸张，不撒娇。',
+          aliases: ['平淡', '普通', 'normal', 'plain']
+        },
+        warm: {
+          label: '热情',
+          instruction: '语气积极、友好、带一点情绪温度，但保持专业和边界。',
+          aliases: ['热情', '积极', 'warm', 'enthusiastic']
+        },
+        affectionate: {
+          label: '爱慕',
+          instruction: '语气温柔亲近、偏暧昧，但保持安全合规，不进行露骨或越界表达。',
+          aliases: ['爱慕', '暧昧', 'romantic', 'affectionate']
+        }
+      }
+    }
+  },
+  workflowRunLog: {
+    enabled: true,
+    dataDir: 'data/workflow-runs',
+    fileName: 'workflow-runs.jsonl',
+    maxBytes: 8388608,
+    targetBytesAfterCompact: 6291456,
+    compactCheckInterval: 20,
+    persist: true
+  },
   openclaw: {
     subagentLabel: 'iirose',
-    timeout: 30000
+    timeout: 30000,
+    local: true,
+    stateless: true,
+    useNativeSessionContext: false
   },
+  providers: {
+    default: 'openclaw',
+    named: {}
+  },
+  music: {
+    playUrlProviders: ['iarcDirect', 'metingRedirect', 'neteaseOuter'],
+    providers: {
+      customTemplate: {
+        enabled: false,
+        urlTemplate: ''
+      },
+      iarcDirect: {
+        enabled: true,
+        urlTemplate: 'https://v.iarc.top/?type=url&id={{id}}#.mp3'
+      },
+      metingRedirect: {
+        enabled: true,
+        endpointTemplate: 'https://api.injahow.cn/meting/?server=netease&type=url&id={{id}}'
+      },
+      neteaseOuter: {
+        enabled: true,
+        urlTemplate: 'https://music.163.com/song/media/outer/url?id={{id}}.mp3'
+      }
+    }
+  },
+  messageMemory: {
+    enabled: true,
+    dataDir: 'data/message-memory',
+    maxEventsPerChannel: 400,
+    recentMessageCount: 20,
+    maxAnchorRounds: 20,
+    compactCheckInterval: 50,
+    compactOnStartup: true,
+    maxMessageChars: 180,
+    persist: true
+  },
+  meme: {
+    enabled: true,
+    triggerProbability: 0.5,
+    requestEmotionTag: true
+  },
+  remotePlugins: {
+    entries: [],
+    timeout: 10000,
+    allowHttp: false
+  },
+  pluginConfigs: {},
   fallbackResponses: [
     '抱歉，我暂时无法处理这个请求。',
     '出了点问题，请稍后再试。',
@@ -62,6 +160,11 @@ const DEFAULT_CONFIG = {
   ],
   rateLimit: {
     perMinute: 60
+  },
+  policy: {
+    allowHighRiskTools: false,
+    allowCrossSessionSend: false,
+    maxMessagesPerWorkflow: 3
   }
 };
 
@@ -111,6 +214,40 @@ function parseInteger(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function normalizePromptStyles(styles = {}, fallbackStyles = {}) {
+  const normalized = {};
+  const mergedEntries = new Map([
+    ...Object.entries(fallbackStyles || {}),
+    ...Object.entries(styles || {})
+  ]);
+
+  for (const [rawKey, rawStyle] of mergedEntries.entries()) {
+    const key = String(rawKey || '').trim().toLowerCase();
+    if (!key) continue;
+    const style = rawStyle && typeof rawStyle === 'object' && !Array.isArray(rawStyle) ? rawStyle : {};
+    const fallback = fallbackStyles[key] && typeof fallbackStyles[key] === 'object' ? fallbackStyles[key] : {};
+    const label = typeof style.label === 'string' && style.label.trim()
+      ? style.label.trim()
+      : (typeof fallback.label === 'string' && fallback.label.trim() ? fallback.label.trim() : key);
+    const instruction = typeof style.instruction === 'string' && style.instruction.trim()
+      ? style.instruction.trim()
+      : (typeof fallback.instruction === 'string' ? fallback.instruction.trim() : '');
+    const aliases = Array.from(new Set([
+      ...(Array.isArray(fallback.aliases) ? fallback.aliases : []),
+      ...(Array.isArray(style.aliases) ? style.aliases : [])
+    ]))
+      .map(item => String(item || '').trim())
+      .filter(Boolean);
+    normalized[key] = {
+      label,
+      instruction,
+      aliases
+    };
+  }
+
+  return normalized;
+}
+
 function parseAdmins(adminString) {
   if (!adminString || typeof adminString !== 'string') {
     return null;
@@ -144,6 +281,12 @@ function getEnvOverride() {
     override.admins = admins;
   }
 
+  if (env.IROSE_RUNTIME_MODE) {
+    override.runtime = {
+      mode: env.IROSE_RUNTIME_MODE
+    };
+  }
+
   if (env.IROSE_OPENCLAW_SUBAGENT || env.IROSE_OPENCLAW_TIMEOUT) {
     override.openclaw = {};
     if (env.IROSE_OPENCLAW_SUBAGENT) {
@@ -151,6 +294,29 @@ function getEnvOverride() {
     }
     if (env.IROSE_OPENCLAW_TIMEOUT) {
       override.openclaw.timeout = parseInteger(env.IROSE_OPENCLAW_TIMEOUT, DEFAULT_CONFIG.openclaw.timeout);
+    }
+  }
+
+  if (
+    env.IROSE_MEME_ENABLED !== undefined ||
+    env.IROSE_MEME_TRIGGER_PROBABILITY !== undefined ||
+    env.IROSE_MEME_REQUEST_EMOTION_TAG !== undefined
+  ) {
+    override.meme = {};
+
+    if (env.IROSE_MEME_ENABLED !== undefined) {
+      override.meme.enabled = String(env.IROSE_MEME_ENABLED).toLowerCase() === 'true';
+    }
+
+    if (env.IROSE_MEME_TRIGGER_PROBABILITY !== undefined) {
+      const probability = Number(env.IROSE_MEME_TRIGGER_PROBABILITY);
+      if (Number.isFinite(probability)) {
+        override.meme.triggerProbability = probability;
+      }
+    }
+
+    if (env.IROSE_MEME_REQUEST_EMOTION_TAG !== undefined) {
+      override.meme.requestEmotionTag = String(env.IROSE_MEME_REQUEST_EMOTION_TAG).toLowerCase() === 'true';
     }
   }
 
@@ -171,6 +337,7 @@ function getEnvOverride() {
 
 function normalizeConfig(config) {
   const normalized = deepMerge({}, config || {});
+  const allowedRuntimeModes = new Set(['legacy', 'hybrid', 'workflow']);
 
   // 兼容 bot.roomId -> roomId
   if (!normalized.roomId && normalized.bot && typeof normalized.bot.roomId === 'string') {
@@ -186,11 +353,235 @@ function normalizeConfig(config) {
     normalized.admins = [];
   }
 
+  normalized.runtime = normalized.runtime || {};
+  const runtimeMode = typeof normalized.runtime.mode === 'string'
+    ? normalized.runtime.mode.trim().toLowerCase()
+    : '';
+  normalized.runtime.mode = allowedRuntimeModes.has(runtimeMode)
+    ? runtimeMode
+    : DEFAULT_CONFIG.runtime.mode;
+  normalized.runtime.eventTriggersEnabled = normalized.runtime.eventTriggersEnabled === true;
+
+  normalized.workflow = normalized.workflow || {};
+  if (typeof normalized.workflow.planner === 'string') {
+    normalized.workflow.planner = normalized.workflow.planner.trim().toLowerCase() || DEFAULT_CONFIG.workflow.planner;
+  } else if (!normalized.workflow.planner && typeof normalized.workflow.plannerFactory !== 'function') {
+    normalized.workflow.planner = DEFAULT_CONFIG.workflow.planner;
+  }
+  normalized.workflow.maxSteps = Math.max(
+    1,
+    parseInteger(normalized.workflow.maxSteps, DEFAULT_CONFIG.workflow.maxSteps)
+  );
+  normalized.workflow.maxToolCallsPerStep = Math.max(
+    1,
+    parseInteger(normalized.workflow.maxToolCallsPerStep, DEFAULT_CONFIG.workflow.maxToolCallsPerStep)
+  );
+  normalized.workflow.allowParallelReadTools = normalized.workflow.allowParallelReadTools !== false;
+  normalized.workflow.promptProfile =
+    normalized.workflow.promptProfile && typeof normalized.workflow.promptProfile === 'object' && !Array.isArray(normalized.workflow.promptProfile)
+      ? { ...normalized.workflow.promptProfile }
+      : {};
+  normalized.workflow.promptProfile.persist = normalized.workflow.promptProfile.persist !== false;
+  normalized.workflow.promptProfile.stateFile =
+    typeof normalized.workflow.promptProfile.stateFile === 'string' && normalized.workflow.promptProfile.stateFile.trim()
+      ? normalized.workflow.promptProfile.stateFile.trim()
+      : DEFAULT_CONFIG.workflow.promptProfile.stateFile;
+  normalized.workflow.promptProfile.botProfile =
+    normalized.workflow.promptProfile.botProfile && typeof normalized.workflow.promptProfile.botProfile === 'object' && !Array.isArray(normalized.workflow.promptProfile.botProfile)
+      ? { ...normalized.workflow.promptProfile.botProfile }
+      : {};
+  normalized.workflow.promptProfile.botProfile.name =
+    typeof normalized.workflow.promptProfile.botProfile.name === 'string' && normalized.workflow.promptProfile.botProfile.name.trim()
+      ? normalized.workflow.promptProfile.botProfile.name.trim()
+      : DEFAULT_CONFIG.workflow.promptProfile.botProfile.name;
+  normalized.workflow.promptProfile.botProfile.identity =
+    typeof normalized.workflow.promptProfile.botProfile.identity === 'string' && normalized.workflow.promptProfile.botProfile.identity.trim()
+      ? normalized.workflow.promptProfile.botProfile.identity.trim()
+      : DEFAULT_CONFIG.workflow.promptProfile.botProfile.identity;
+  normalized.workflow.promptProfile.botProfile.extraInstruction =
+    typeof normalized.workflow.promptProfile.botProfile.extraInstruction === 'string'
+      ? normalized.workflow.promptProfile.botProfile.extraInstruction.trim()
+      : DEFAULT_CONFIG.workflow.promptProfile.botProfile.extraInstruction;
+  normalized.workflow.promptProfile.styles = normalizePromptStyles(
+    normalized.workflow.promptProfile.styles,
+    DEFAULT_CONFIG.workflow.promptProfile.styles
+  );
+  normalized.workflow.promptProfile.activeStyle =
+    typeof normalized.workflow.promptProfile.activeStyle === 'string' && normalized.workflow.promptProfile.activeStyle.trim()
+      ? normalized.workflow.promptProfile.activeStyle.trim().toLowerCase()
+      : DEFAULT_CONFIG.workflow.promptProfile.activeStyle;
+  if (!normalized.workflow.promptProfile.styles[normalized.workflow.promptProfile.activeStyle]) {
+    normalized.workflow.promptProfile.activeStyle = DEFAULT_CONFIG.workflow.promptProfile.activeStyle;
+  }
+
+  normalized.workflowRunLog = normalized.workflowRunLog || {};
+  normalized.workflowRunLog.enabled = normalized.workflowRunLog.enabled !== false;
+  normalized.workflowRunLog.dataDir = normalized.workflowRunLog.dataDir || DEFAULT_CONFIG.workflowRunLog.dataDir;
+  normalized.workflowRunLog.fileName = typeof normalized.workflowRunLog.fileName === 'string' && normalized.workflowRunLog.fileName.trim()
+    ? normalized.workflowRunLog.fileName.trim()
+    : DEFAULT_CONFIG.workflowRunLog.fileName;
+  normalized.workflowRunLog.maxBytes = parseInteger(
+    normalized.workflowRunLog.maxBytes,
+    DEFAULT_CONFIG.workflowRunLog.maxBytes
+  );
+  normalized.workflowRunLog.targetBytesAfterCompact = parseInteger(
+    normalized.workflowRunLog.targetBytesAfterCompact,
+    DEFAULT_CONFIG.workflowRunLog.targetBytesAfterCompact
+  );
+  normalized.workflowRunLog.compactCheckInterval = parseInteger(
+    normalized.workflowRunLog.compactCheckInterval,
+    DEFAULT_CONFIG.workflowRunLog.compactCheckInterval
+  );
+  normalized.workflowRunLog.persist = normalized.workflowRunLog.persist !== false;
+
   normalized.openclaw = normalized.openclaw || {};
   normalized.openclaw.timeout = parseInteger(normalized.openclaw.timeout, DEFAULT_CONFIG.openclaw.timeout);
+  normalized.openclaw.local = normalized.openclaw.local !== false;
+  normalized.openclaw.stateless = normalized.openclaw.stateless !== false;
+  normalized.openclaw.useNativeSessionContext = normalized.openclaw.useNativeSessionContext === true;
+
+  normalized.providers = normalized.providers && typeof normalized.providers === 'object'
+    ? { ...normalized.providers }
+    : { ...DEFAULT_CONFIG.providers };
+  if (typeof normalized.providers.default === 'string') {
+    normalized.providers.default = normalized.providers.default.trim().toLowerCase() || DEFAULT_CONFIG.providers.default;
+  } else {
+    normalized.providers.default = DEFAULT_CONFIG.providers.default;
+  }
+  normalized.providers.named = normalized.providers.named && typeof normalized.providers.named === 'object' && !Array.isArray(normalized.providers.named)
+    ? Object.fromEntries(
+        Object.entries(normalized.providers.named)
+          .map(([name, entry]) => {
+            const normalizedName = String(name || '').trim().toLowerCase();
+            if (!normalizedName || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+              return null;
+            }
+
+            return [normalizedName, {
+              ...entry,
+              type: typeof entry.type === 'string' && entry.type.trim()
+                ? entry.type.trim().toLowerCase()
+                : 'openai-compatible',
+              baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.trim() : '',
+              apiKey: typeof entry.apiKey === 'string' ? entry.apiKey.trim() : '',
+              model: typeof entry.model === 'string' ? entry.model.trim() : '',
+              endpointPath: typeof entry.endpointPath === 'string' ? entry.endpointPath.trim() : '',
+              timeout: parseInteger(entry.timeout, DEFAULT_CONFIG.openclaw.timeout),
+              maxTokens: parseInteger(entry.maxTokens, 0),
+              enabled: entry.enabled !== false,
+              headers: entry.headers && typeof entry.headers === 'object' && !Array.isArray(entry.headers)
+                ? Object.fromEntries(
+                    Object.entries(entry.headers)
+                      .map(([key, value]) => [String(key || '').trim(), String(value ?? '').trim()])
+                      .filter(([key, value]) => key && value)
+                  )
+                : {}
+            }];
+          })
+          .filter(Boolean)
+      )
+    : {};
+
+  normalized.music = normalized.music || {};
+  normalized.music.playUrlProviders = Array.isArray(normalized.music.playUrlProviders)
+    ? normalized.music.playUrlProviders.map(item => String(item || '').trim()).filter(Boolean)
+    : [...DEFAULT_CONFIG.music.playUrlProviders];
+  if (normalized.music.playUrlProviders.length === 0) {
+    normalized.music.playUrlProviders = [...DEFAULT_CONFIG.music.playUrlProviders];
+  }
+  normalized.music.providers = normalized.music.providers || {};
+  normalized.music.providers.customTemplate = normalized.music.providers.customTemplate || {};
+  normalized.music.providers.customTemplate.enabled = normalized.music.providers.customTemplate.enabled === true;
+  normalized.music.providers.customTemplate.urlTemplate =
+    typeof normalized.music.providers.customTemplate.urlTemplate === 'string'
+      ? normalized.music.providers.customTemplate.urlTemplate.trim()
+      : DEFAULT_CONFIG.music.providers.customTemplate.urlTemplate;
+  normalized.music.providers.iarcDirect = normalized.music.providers.iarcDirect || {};
+  normalized.music.providers.iarcDirect.enabled = normalized.music.providers.iarcDirect.enabled !== false;
+  normalized.music.providers.iarcDirect.urlTemplate =
+    typeof normalized.music.providers.iarcDirect.urlTemplate === 'string' &&
+    normalized.music.providers.iarcDirect.urlTemplate.trim()
+      ? normalized.music.providers.iarcDirect.urlTemplate.trim()
+      : DEFAULT_CONFIG.music.providers.iarcDirect.urlTemplate;
+  normalized.music.providers.metingRedirect = normalized.music.providers.metingRedirect || {};
+  normalized.music.providers.metingRedirect.enabled = normalized.music.providers.metingRedirect.enabled !== false;
+  normalized.music.providers.metingRedirect.endpointTemplate =
+    typeof normalized.music.providers.metingRedirect.endpointTemplate === 'string' &&
+    normalized.music.providers.metingRedirect.endpointTemplate.trim()
+      ? normalized.music.providers.metingRedirect.endpointTemplate.trim()
+      : DEFAULT_CONFIG.music.providers.metingRedirect.endpointTemplate;
+  normalized.music.providers.neteaseOuter = normalized.music.providers.neteaseOuter || {};
+  normalized.music.providers.neteaseOuter.enabled = normalized.music.providers.neteaseOuter.enabled !== false;
+  normalized.music.providers.neteaseOuter.urlTemplate =
+    typeof normalized.music.providers.neteaseOuter.urlTemplate === 'string' &&
+    normalized.music.providers.neteaseOuter.urlTemplate.trim()
+      ? normalized.music.providers.neteaseOuter.urlTemplate.trim()
+      : DEFAULT_CONFIG.music.providers.neteaseOuter.urlTemplate;
+
+  normalized.messageMemory = normalized.messageMemory || {};
+  normalized.messageMemory.enabled = normalized.messageMemory.enabled !== false;
+  normalized.messageMemory.dataDir = normalized.messageMemory.dataDir || DEFAULT_CONFIG.messageMemory.dataDir;
+  normalized.messageMemory.maxEventsPerChannel = parseInteger(
+    normalized.messageMemory.maxEventsPerChannel,
+    DEFAULT_CONFIG.messageMemory.maxEventsPerChannel
+  );
+  normalized.messageMemory.recentMessageCount = parseInteger(
+    normalized.messageMemory.recentMessageCount,
+    DEFAULT_CONFIG.messageMemory.recentMessageCount
+  );
+  normalized.messageMemory.maxAnchorRounds = parseInteger(
+    normalized.messageMemory.maxAnchorRounds,
+    DEFAULT_CONFIG.messageMemory.maxAnchorRounds
+  );
+  normalized.messageMemory.compactCheckInterval = parseInteger(
+    normalized.messageMemory.compactCheckInterval,
+    DEFAULT_CONFIG.messageMemory.compactCheckInterval
+  );
+  normalized.messageMemory.compactOnStartup = normalized.messageMemory.compactOnStartup !== false;
+  normalized.messageMemory.maxMessageChars = parseInteger(
+    normalized.messageMemory.maxMessageChars,
+    DEFAULT_CONFIG.messageMemory.maxMessageChars
+  );
+  normalized.messageMemory.persist = normalized.messageMemory.persist !== false;
+
+  normalized.meme = normalized.meme || {};
+  normalized.meme.enabled = normalized.meme.enabled !== false;
+  normalized.meme.requestEmotionTag = normalized.meme.requestEmotionTag !== false;
+
+  const probability = Number(normalized.meme.triggerProbability);
+  if (!Number.isFinite(probability)) {
+    normalized.meme.triggerProbability = DEFAULT_CONFIG.meme.triggerProbability;
+  } else {
+    normalized.meme.triggerProbability = Math.min(1, Math.max(0, probability));
+  }
+
+  if (Array.isArray(normalized.remotePlugins)) {
+    normalized.remotePlugins = { entries: [...normalized.remotePlugins] };
+  }
+  normalized.remotePlugins = normalized.remotePlugins || {};
+  if (!Array.isArray(normalized.remotePlugins.entries)) {
+    normalized.remotePlugins.entries = [];
+  }
+  normalized.remotePlugins.timeout = parseInteger(
+    normalized.remotePlugins.timeout,
+    DEFAULT_CONFIG.remotePlugins.timeout
+  );
+  normalized.remotePlugins.allowHttp = Boolean(normalized.remotePlugins.allowHttp);
+
+  if (!isPlainObject(normalized.pluginConfigs)) {
+    normalized.pluginConfigs = {};
+  }
 
   normalized.rateLimit = normalized.rateLimit || {};
   normalized.rateLimit.perMinute = parseInteger(normalized.rateLimit.perMinute, DEFAULT_CONFIG.rateLimit.perMinute);
+
+  normalized.policy = normalized.policy || {};
+  normalized.policy.allowHighRiskTools = normalized.policy.allowHighRiskTools === true;
+  normalized.policy.allowCrossSessionSend = normalized.policy.allowCrossSessionSend === true;
+  normalized.policy.maxMessagesPerWorkflow = Math.max(
+    1,
+    parseInteger(normalized.policy.maxMessagesPerWorkflow, DEFAULT_CONFIG.policy.maxMessagesPerWorkflow)
+  );
 
   return normalized;
 }
@@ -217,17 +608,11 @@ function loadRuntimeConfig(options = {}) {
     return cachedConfig;
   }
 
-  // 优先级：默认值 < app.example.json < bot.json(兼容) < app.local.json < 环境变量
+  // 优先级：默认值 < app.json < 环境变量
   let merged = deepMerge({}, DEFAULT_CONFIG);
 
-  const exampleConfig = readJsonIfExists(CONFIG_PATHS.example);
-  if (exampleConfig) merged = deepMerge(merged, exampleConfig);
-
-  const legacyConfig = readJsonIfExists(CONFIG_PATHS.legacy);
-  if (legacyConfig) merged = deepMerge(merged, legacyConfig);
-
-  const localConfig = readJsonIfExists(CONFIG_PATHS.local);
-  if (localConfig) merged = deepMerge(merged, localConfig);
+  const appConfig = readJsonIfExists(CONFIG_PATHS.app);
+  if (appConfig) merged = deepMerge(merged, appConfig);
 
   merged = deepMerge(merged, getEnvOverride());
   merged = normalizeConfig(merged);

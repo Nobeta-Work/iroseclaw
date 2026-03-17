@@ -6,6 +6,14 @@
 const permission = require('./permission');
 const protocol = require('./protocol');
 const audit = require('./audit');
+const { createFallbackPicker } = require('../utils/fallback');
+const {
+  getSourceSession,
+  getSessionUserId,
+  getSessionUsername,
+  getSessionChannelId,
+  getSessionMessageId
+} = require('../utils/session-metadata');
 
 function escapeRegExp(text) {
   if (typeof text !== 'string' || !text) {
@@ -23,15 +31,24 @@ function escapeRegExp(text) {
  * @param {number} config.rateLimit - 速率限制（每分钟请求数）
  * @param {Object} openclawAdapter - OpenClaw 适配器实例
  * @param {Object} skillManager - 技能管理器实例
+ * @param {Object} [options] - 附加选项
+ * @param {Function} [options.pickFallback] - 失败兜底取词函数
+ * @param {Function} [options.getConversationContext] - 构建对话上下文
  * @returns {Function} handleMessage 函数
  */
-function createMessageHandler(config, openclawAdapter, skillManager) {
+function createMessageHandler(config, openclawAdapter, skillManager, options = {}) {
   // 速率限制追踪：Map<userId, { count, resetTime }>
   const rateLimitMap = new Map();
   
   const botUid = config.bot?.uid || '';
   const botName = config.bot?.name || '';
   const rateLimitPerMinute = config.rateLimit?.perMinute || 60;
+  const pickFallback = typeof options.pickFallback === 'function'
+    ? options.pickFallback
+    : createFallbackPicker(config.fallbackResponses);
+  const getConversationContext = typeof options.getConversationContext === 'function'
+    ? options.getConversationContext
+    : (() => ({}));
 
   /**
    * 检查速率限制
@@ -143,10 +160,17 @@ function createMessageHandler(config, openclawAdapter, skillManager) {
    * @returns {Promise<string|null>} 回复文本或 null
    */
   async function handleMessage(session) {
+    let resolvedUserId = 'unknown';
+
     try {
+      const sourceSession = getSourceSession(session);
+
       // a) 从 session 提取 userId, username, content
-      const userId = session.userId || session.user?.id || 'unknown';
-      const username = session.username || session.user?.name || '未知用户';
+      const userId = getSessionUserId(session) || 'unknown';
+      resolvedUserId = userId;
+      const username = getSessionUsername(session) || '未知用户';
+      const channelId = getSessionChannelId(session);
+      const messageId = getSessionMessageId(session);
       const content = session.rawContent || session.content || session.message || '';
 
       // b) 检测是否@机器人
@@ -196,11 +220,25 @@ function createMessageHandler(config, openclawAdapter, skillManager) {
         isOverreach: false,
         allowedSkills: ['help', 'music', 'chat']
       };
+      const conversationContext = getConversationContext({
+        session,
+        userId,
+        username,
+        cleanedContent
+      }) || {};
       
       const protocolRequest = protocol.buildRequest(
-        { userId, chatId: session.chatId || '', messageId: session.messageId || '', platform: 'iirose' },
+        {
+          userId,
+          username,
+          chatId: session.chatId || channelId || '',
+          channelId: channelId || session.chatId || '',
+          messageId,
+          platform: session.platform || sourceSession.platform || 'iirose'
+        },
         { content: cleanedContent, mentionIds: [], isBotMentioned: true },
-        permissionCtx
+        permissionCtx,
+        conversationContext
       );
 
       // h) 调用 OpenClaw 子代理获取 JSON 响应
@@ -220,7 +258,7 @@ function createMessageHandler(config, openclawAdapter, skillManager) {
           skillArgs: response.skillArgs
         });
         
-        const skillResult = await skillManager.execute(response.skillName, response.skillArgs, session);
+        const skillResult = await skillManager.execute(response.skillName, response.skillArgs, sourceSession);
         
         if (skillResult !== null && skillResult !== undefined) {
           finalResponse = skillResult;
@@ -243,12 +281,12 @@ function createMessageHandler(config, openclawAdapter, skillManager) {
       console.error('[MessageHandler] Error:', error.message);
       
       audit.logEvent('error', {
-        userId: session.userId || 'unknown',
+        userId: resolvedUserId,
         error: error.message,
         stack: error.stack
       });
 
-      return '处理消息时出错，请稍后再试。';
+      return pickFallback();
     }
   }
 

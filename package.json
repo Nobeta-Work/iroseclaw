@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "koishi start",
     "test": "node tests/run.js",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "config:extract": "node scripts/config-extract.js",
+    "config:restore": "node scripts/config-restore.js"
   },
   "keywords": [
     "iirose",

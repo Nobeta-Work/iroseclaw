@@ -31,18 +31,27 @@ test('Load runtime config', () => {
   if (!config.bot) throw new Error('Missing bot config');
   if (!config.bot.name) throw new Error('Missing bot.name');
   if (!config.admins || !Array.isArray(config.admins)) throw new Error('Invalid admins');
+  if (!config.runtime?.mode) throw new Error('Missing runtime.mode');
+  if (!config.workflow?.maxSteps) throw new Error('Missing workflow.maxSteps');
+  if (!config.pluginConfigs || typeof config.pluginConfigs !== 'object') throw new Error('Missing pluginConfigs');
   if (!config.openclaw?.subagentLabel) throw new Error('Missing openclaw.subagentLabel');
   if (!config.rateLimit?.perMinute) throw new Error('Missing rateLimit.perMinute');
   
   console.log(`   Bot: ${config.bot.name} (${config.bot.uid})`);
   console.log(`   Room: ${config.roomId}`);
   console.log(`   Admins: ${config.admins.length}`);
+  console.log(`   Runtime mode: ${config.runtime.mode}`);
   console.log(`   Subagent: ${config.openclaw.subagentLabel}`);
 });
 
 // Test 2: Load OpenClawAdapter
 test('Load OpenClawAdapter', () => {
   const { OpenClawAdapter } = require('../src/adapters/openclaw-adapter');
+  const { OpenClawProvider } = require('../src/ai/providers/openclaw-provider');
+  const { OpenAICompatibleProvider } = require('../src/ai/providers/openai-compatible-provider');
+  const { MockProvider } = require('../src/ai/providers/mock-provider');
+  const { MemoryStateStore } = require('../src/runtime/state/memory-store');
+  const { WorkflowHookRegistry } = require('../src/runtime/workflow/hooks/registry');
   const adapter = new OpenClawAdapter({
     subagentLabel: 'test-chat',
     timeout: 5000,
@@ -51,6 +60,12 @@ test('Load OpenClawAdapter', () => {
   
   if (!adapter.config) throw new Error('Adapter config missing');
   if (adapter.config.subagentLabel !== 'test-chat') throw new Error('Config mismatch');
+  if (typeof adapter.processMessage !== 'function') throw new Error('processMessage missing');
+  if (!(adapter.provider instanceof OpenClawProvider)) throw new Error('Adapter provider missing');
+  if (typeof OpenAICompatibleProvider !== 'function') throw new Error('OpenAICompatibleProvider export missing');
+  if (typeof MockProvider !== 'function') throw new Error('MockProvider export missing');
+  if (typeof MemoryStateStore !== 'function') throw new Error('MemoryStateStore export missing');
+  if (typeof WorkflowHookRegistry !== 'function') throw new Error('WorkflowHookRegistry export missing');
 });
 
 // Test 3: Load SkillManager
@@ -60,8 +75,65 @@ test('Load SkillManager', () => {
   
   if (!manager.skills) throw new Error('Skills map missing');
   if (typeof manager.register !== 'function') throw new Error('register method missing');
+  if (typeof manager.onRegister !== 'function') throw new Error('onRegister method missing');
   if (typeof manager.execute !== 'function') throw new Error('execute method missing');
   if (typeof manager.loadBuiltin !== 'function') throw new Error('loadBuiltin method missing');
+});
+
+// Test 3b: Load ToolRegistry and workflow skeleton
+test('Load ToolRegistry and planner/runtime skeletons', () => {
+  const { ToolRegistry } = require('../src/tools/registry');
+  const { PolicyEngine } = require('../src/runtime/policy/engine');
+  const { OutputRuntime } = require('../src/runtime/output/runtime');
+  const { createMemeOutputPlugin } = require('../src/runtime/output/plugins/meme-output');
+  const { BaseModelProvider } = require('../src/ai/providers/base-provider');
+  const { MockProvider } = require('../src/ai/providers/mock-provider');
+  const { OpenClawProvider } = require('../src/ai/providers/openclaw-provider');
+  const { OpenAICompatibleProvider } = require('../src/ai/providers/openai-compatible-provider');
+  const { BaseWorkflowPlanner } = require('../src/runtime/workflow/planners/base-planner');
+  const { LegacyOpenClawPlanner } = require('../src/runtime/workflow/planners/legacy-openclaw-planner');
+  const { LlmWorkflowPlanner } = require('../src/runtime/workflow/planners/llm-workflow-planner');
+  const { OpenClawWorkflowOrchestrator } = require('../src/runtime/workflow/orchestrator');
+  const { WorkflowRuntime } = require('../src/runtime/workflow/runtime');
+  const { WorkflowRunLog } = require('../src/runtime/audit/workflow-run-log');
+  const triggerTemplates = require('../src/runtime/trigger/templates');
+  const messageRuntime = require('../src/runtime/message/handler');
+
+  const registry = new ToolRegistry();
+  const policyEngine = new PolicyEngine();
+  const outputRuntime = new OutputRuntime({ policyEngine });
+  outputRuntime.registerPlugin(createMemeOutputPlugin({ enabled: true, triggerProbability: 1 }));
+  const planner = new LegacyOpenClawPlanner({});
+  const orchestrator = new OpenClawWorkflowOrchestrator({});
+  const runLog = new WorkflowRunLog({
+    enabled: true,
+    persist: false
+  });
+  const runtime = new WorkflowRuntime({
+    planner,
+    toolRegistry: registry,
+    outputRuntime,
+    policyEngine,
+    runLogger: runLog
+  });
+
+  if (typeof registry.register !== 'function') throw new Error('ToolRegistry.register missing');
+  if (typeof policyEngine.evaluateToolCall !== 'function') throw new Error('PolicyEngine.evaluateToolCall missing');
+  if (typeof outputRuntime.execute !== 'function') throw new Error('OutputRuntime.execute missing');
+  if (typeof outputRuntime.executeBatch !== 'function') throw new Error('OutputRuntime.executeBatch missing');
+  if (typeof BaseModelProvider !== 'function') throw new Error('BaseModelProvider export missing');
+  if (typeof OpenClawProvider !== 'function') throw new Error('OpenClawProvider export missing');
+  if (typeof OpenAICompatibleProvider !== 'function') throw new Error('OpenAICompatibleProvider export missing');
+  if (typeof MockProvider !== 'function') throw new Error('MockProvider export missing');
+  if (typeof BaseWorkflowPlanner !== 'function') throw new Error('BaseWorkflowPlanner export missing');
+  if (typeof planner.decideNextStep !== 'function') throw new Error('LegacyOpenClawPlanner.decideNextStep missing');
+  if (typeof LlmWorkflowPlanner !== 'function') throw new Error('LlmWorkflowPlanner export missing');
+  if (typeof orchestrator.decideNextStep !== 'function') throw new Error('OpenClawWorkflowOrchestrator.decideNextStep missing');
+  if (typeof runtime.run !== 'function') throw new Error('WorkflowRuntime.run missing');
+  if (typeof runLog.recordRun !== 'function') throw new Error('WorkflowRunLog.recordRun missing');
+  if (typeof triggerTemplates.getTriggerTemplate !== 'function') throw new Error('getTriggerTemplate missing');
+  if (typeof messageRuntime.handleWorkflowMentionMessage !== 'function') throw new Error('handleWorkflowMentionMessage missing');
+  if (typeof messageRuntime.handleHybridMentionMessage !== 'function') throw new Error('handleHybridMentionMessage missing');
 });
 
 // Test 4: Load and register built-in skills
@@ -152,8 +224,60 @@ test('Load main index.js', () => {
   if (typeof index.apply !== 'function') throw new Error('apply function missing');
   if (!index.OpenClawAdapter) throw new Error('OpenClawAdapter export missing');
   if (!index.SkillManager) throw new Error('SkillManager export missing');
+  if (!index.ToolRegistry) throw new Error('ToolRegistry export missing');
+  if (!index.WorkflowRuntime) throw new Error('WorkflowRuntime export missing');
+  if (!index.ContextService) throw new Error('ContextService export missing');
+  if (!index.TriggerRouter) throw new Error('TriggerRouter export missing');
+  if (!index.WorkflowRunLog) throw new Error('WorkflowRunLog export missing');
   
   console.log(`   Plugin name: ${index.name}`);
+});
+
+// Test 9b: Bridge skill manager to tool registry
+test('Bridge built-in skills into ToolRegistry', () => {
+  const { SkillManager } = require('../src/skills/manager');
+  const { ToolRegistry } = require('../src/tools/registry');
+  const { bridgeSkillManagerToToolRegistry } = require('../src/tools/compat/skill-bridge');
+
+  const skillManager = new SkillManager();
+  const toolRegistry = new ToolRegistry();
+
+  bridgeSkillManagerToToolRegistry(skillManager, toolRegistry);
+  skillManager.loadBuiltin({ skillManager });
+
+  const tools = toolRegistry.list();
+  const toolNames = tools.map(tool => tool.name);
+
+  if (!toolNames.includes('help')) throw new Error('help tool missing from bridge');
+  if (!toolNames.includes('music')) throw new Error('music tool missing from bridge');
+  if (!toolNames.includes('chat')) throw new Error('chat tool missing from bridge');
+});
+
+// Test 9c: Load builtin workflow tools
+test('Load builtin workflow tools', () => {
+  const { createHelpOverviewTool } = require('../src/tools/builtins/help-overview');
+  const { createReplyCurrentTool } = require('../src/tools/builtins/reply-current');
+  const { createMusicPlayNeteaseTool } = require('../src/tools/builtins/music-play-netease');
+  const { createMessageRouteTool } = require('../src/tools/builtins/message-route');
+  const { OutputRuntime } = require('../src/runtime/output/runtime');
+  const { PolicyEngine } = require('../src/runtime/policy/engine');
+
+  const outputRuntime = new OutputRuntime({
+    policyEngine: new PolicyEngine()
+  });
+
+  const helpTool = createHelpOverviewTool({
+    listSkills: () => [],
+    listTools: () => []
+  });
+  const replyTool = createReplyCurrentTool({ outputRuntime });
+  const musicTool = createMusicPlayNeteaseTool();
+  const routeTool = createMessageRouteTool({ outputRuntime });
+
+  if (helpTool.name !== 'help.show') throw new Error('help.show tool invalid');
+  if (replyTool.name !== 'reply.current') throw new Error('reply.current tool invalid');
+  if (musicTool.name !== 'music.play_netease') throw new Error('music.play_netease tool invalid');
+  if (routeTool.name !== 'message.route') throw new Error('message.route tool invalid');
 });
 
 // Test 10: Test skill execution

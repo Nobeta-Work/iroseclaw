@@ -1,12 +1,14 @@
 /**
  * OpenClaw Adapter
- * 负责与 OpenClaw 子代理通信
+ * 兼容 legacy chat / legacy workflow 语义；底层 transport 由 OpenClawAgentBridge 提供。
  */
 
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-
-const execFileAsync = promisify(execFile);
+const { createFallbackPicker, normalizeFallbackResponses } = require('../utils/fallback');
+const { normalizeWorkflowStepDecision } = require('../contracts/workflow');
+const { OpenClawAgentBridge } = require('../ai/providers/openclaw-agent-bridge');
+const { compileWorkflowPrompt } = require('../runtime/workflow/prompt/compiler');
+const { parseWorkflowDecisionText } = require('../runtime/workflow/decision/parser');
+const { buildContextPrompt } = require('../runtime/workflow/prompt/serializers');
 
 class OpenClawAdapter {
   /**
@@ -14,18 +16,139 @@ class OpenClawAdapter {
    * @param {string} config.subagentLabel - 子代理标签
    * @param {number} config.timeout - 超时时间（毫秒）
    * @param {string[]} config.fallbackResponses - 备用响应列表
+   * @param {Object} [config.meme] - 表情包情绪配置
+   * @param {boolean} [config.meme.enabled] - 是否启用情绪标签注入
+   * @param {boolean} [config.meme.requestEmotionTag] - 是否请求模型输出情绪标签
    */
   constructor(config) {
+    const input = config && typeof config === 'object' ? config : {};
     this.config = {
-      subagentLabel: config.subagentLabel || 'iirose',
-      timeout: config.timeout || 30000,
-      fallbackResponses: config.fallbackResponses || [
-        '抱歉，我暂时无法处理这个请求。',
-        '出了点问题，请稍后再试。',
-        '我现在有点忙，晚点再聊吧。',
-        '这个功能暂时不可用。'
-      ]
+      subagentLabel: input.subagentLabel || 'iirose',
+      timeout: input.timeout || 30000,
+      local: input.local !== false,
+      stateless: input.stateless !== false,
+      useNativeSessionContext: input.useNativeSessionContext === true,
+      fallbackResponses: normalizeFallbackResponses(input.fallbackResponses),
+      meme: {
+        enabled: input?.meme?.enabled !== false,
+        requestEmotionTag: input?.meme?.requestEmotionTag !== false
+      },
+      promptProfile: input?.promptProfile && typeof input.promptProfile === 'object'
+        ? { ...input.promptProfile }
+        : {},
+      retry: {
+        maxRetries: toPositiveInt(input?.retry?.maxRetries, 1),
+        retryDelayMs: toPositiveInt(input?.retry?.retryDelayMs, 250)
+      }
     };
+    this.logger = input.logger || console;
+    this.pickFallback = createFallbackPicker(this.config.fallbackResponses);
+    this.sessionQueues = new Map();
+    this.provider = input.provider || new OpenClawAgentBridge({
+      subagentLabel: this.config.subagentLabel,
+      timeout: this.config.timeout,
+      local: this.config.local,
+      stateless: this.config.stateless,
+      logger: input.logger || console
+    });
+  }
+
+  _buildExecArgs(args = []) {
+    if (typeof this.provider.buildExecArgs === 'function') {
+      return this.provider.buildExecArgs(args);
+    }
+    return this.provider._buildExecArgs(args);
+  }
+
+  _resolveOpenClawInvocation() {
+    if (typeof this.provider.resolveInvocation === 'function') {
+      return this.provider.resolveInvocation();
+    }
+    return this.provider._resolveOpenClawInvocation();
+  }
+
+  _appendEmotionInstruction(message) {
+    const text = typeof message === 'string' ? message.trim() : '';
+    if (!text) return text;
+
+    if (!this.config.meme.enabled || !this.config.meme.requestEmotionTag) {
+      return text;
+    }
+
+    const instruction = [
+      '请在回复末尾附加一个情绪标签，格式：[[EMO:情绪]]。',
+      '情绪示例：开心、难过、生气、无语、疑惑、惊讶、调皮、安慰。',
+      '除了该标签，不要输出其他解释。'
+    ].join('');
+
+    return `${text}\n\n${instruction}`;
+  }
+
+  _formatContextMessage(item) {
+    if (!item || typeof item !== 'object') return '';
+    const role = item.role === 'assistant'
+      ? 'BOT'
+      : `${item.username || '未知用户'}(uid=${item.userId || 'unknown'})`;
+    const mentionLabel = item.isMentionBot ? ' @bot' : '';
+    const content = typeof item.content === 'string' ? item.content.trim() : '';
+    if (!content) return '';
+    return `- ${role}${mentionLabel}: ${content}`;
+  }
+
+  _buildPermissionPrompt(protocolRequest) {
+    const permission = protocolRequest?.permission || {};
+    const lines = [];
+
+    if (permission.isAdmin === true) {
+      lines.push('当前触发用户拥有管理员权限。');
+      lines.push('在策略允许且工具可见的前提下，可以执行管理员级动作或按管理员身份回答。');
+    } else {
+      lines.push('当前触发用户不是管理员。');
+      lines.push('不要暗示其拥有管理员级能力，也不要为其规划管理员专属动作。');
+    }
+
+    if (permission.isSystemRequest === true) {
+      lines.push('当前消息包含系统/管理意图。请谨慎判断是否需要工具，而不是直接臆造执行结果。');
+    }
+
+    const allowedSkills = Array.isArray(permission.allowedSkills)
+      ? permission.allowedSkills.filter(Boolean)
+      : [];
+    if (allowedSkills.length > 0) {
+      lines.push(`当前权限上下文允许的 legacy actions/skills: ${allowedSkills.join(', ')}`);
+    }
+
+    return lines;
+  }
+
+  _buildContextPrompt(protocolRequest) {
+    return buildContextPrompt(protocolRequest, {
+      useNativeSessionContext: this.config.useNativeSessionContext === true
+    });
+  }
+
+  _buildNativeContextPrompt(protocolRequest) {
+    const triggerUser = protocolRequest?.context?.triggerUser || {};
+    const currentMessage = protocolRequest?.context?.currentMessage || {};
+    const currentContent = typeof currentMessage.content === 'string'
+      ? currentMessage.content.trim()
+      : (typeof protocolRequest?.message?.content === 'string' ? protocolRequest.message.content.trim() : '');
+
+    const blocks = [
+      '你正在 IIROSE 群聊环境中回复消息。',
+      '必须使用 uid 区分用户，不能把同名用户视为同一人。',
+      `当前房间: ${protocolRequest?.session?.channelId || protocolRequest?.session?.chatId || 'unknown'}`,
+      `当前触发用户: ${triggerUser.name || protocolRequest?.session?.username || '未知用户'} (uid=${triggerUser.id || protocolRequest?.session?.userId || 'unknown'})`,
+      '同一 session 的历史消息由系统自动保留，不需要你重复复述上下文，也不要臆造不存在的历史。'
+    ];
+    blocks.push(...this._buildPermissionPrompt(protocolRequest));
+
+    if (currentContent) {
+      blocks.push(`当前需要回复的消息: ${(currentMessage.username || triggerUser.name || '未知用户')}(uid=${currentMessage.userId || triggerUser.id || 'unknown'}): ${currentContent}`);
+    }
+
+    blocks.push('请只回复当前消息，保持自然、简短、直接。');
+    return blocks.join('\n');
   }
 
   /**
@@ -33,8 +156,7 @@ class OpenClawAdapter {
    * @returns {string} 备用响应文本
    */
   _getRandomFallback() {
-    const responses = this.config.fallbackResponses;
-    return responses[Math.floor(Math.random() * responses.length)];
+    return this.pickFallback();
   }
 
   /**
@@ -61,41 +183,94 @@ class OpenClawAdapter {
     };
   }
 
+  _sanitizeSessionId(value, fallback = 'irose-chat') {
+    const text = typeof value === 'string' ? value : String(value ?? '');
+    const normalized = text
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 120);
+    return normalized || fallback;
+  }
+
+  _buildConversationSessionId(protocolRequest) {
+    if (!this.config.useNativeSessionContext) {
+      return this._sanitizeSessionId(
+        `irose-request-${protocolRequest?.requestId || protocolRequest?.session?.messageId || Date.now()}`
+      );
+    }
+
+    const channelId = protocolRequest?.session?.channelId || protocolRequest?.session?.chatId || '';
+    const userId = protocolRequest?.session?.userId || '';
+    const scope = channelId || userId || protocolRequest?.requestId || 'global';
+    return this._sanitizeSessionId(`irose-session-${scope}`);
+  }
+
+  _buildSessionQueueKey(protocolRequest = {}) {
+    const channelId = protocolRequest?.session?.channelId || protocolRequest?.session?.chatId || '';
+    const userId = protocolRequest?.session?.userId || '';
+    const scope = channelId || userId || 'global';
+    if (this.config.useNativeSessionContext) {
+      return this._sanitizeSessionId(`irose-session-${scope}`);
+    }
+    return this._sanitizeSessionId(`irose-queue-${scope}`);
+  }
+
+  _buildCommandArgs(protocolRequest, messageContent) {
+    return this.provider.buildAgentArgs({
+      agentLabel: this.config.subagentLabel,
+      message: messageContent,
+      timeoutMs: this.config.timeout,
+      sessionId: this._buildConversationSessionId(protocolRequest),
+      statefulSession: this.config.useNativeSessionContext === true,
+      local: this.config.local,
+      json: false
+    });
+  }
+
+  _buildWorkflowPrompt(workflowInput = {}) {
+    return compileWorkflowPrompt(workflowInput, {
+      contextPrompt: this._buildContextPrompt(workflowInput.protocolRequest || {}),
+      meme: this.config.meme,
+      promptProfile: this.config.promptProfile || {}
+    }).prompt;
+  }
+
+  _parseWorkflowDecisionText(text) {
+    const parsed = parseWorkflowDecisionText(text);
+    return parsed.ok ? parsed.decision : null;
+  }
+
+  async _runInSessionQueue(protocolRequest, task) {
+    const queueKey = this._buildSessionQueueKey(protocolRequest);
+    const previous = this.sessionQueues.get(queueKey) || Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(task);
+
+    this.sessionQueues.set(queueKey, current);
+
+    try {
+      return await current;
+    } finally {
+      if (this.sessionQueues.get(queueKey) === current) {
+        this.sessionQueues.delete(queueKey);
+      }
+    }
+  }
+
   /**
    * 从 OpenClaw JSON 输出中提取文本
    * @param {string} stdout - 标准输出
    * @returns {string}
    */
   _extractReplyTextFromJson(stdout) {
-    if (typeof stdout !== 'string' || !stdout.trim()) {
-      return '';
+    if (typeof this.provider.extractTextFromJson === 'function') {
+      return this.provider.extractTextFromJson(stdout);
     }
-
-    const start = stdout.indexOf('{');
-    const end = stdout.lastIndexOf('}');
-    if (start < 0 || end <= start) {
-      return '';
-    }
-
-    try {
-      const payload = JSON.parse(stdout.slice(start, end + 1));
-      const reply = payload?.result?.payloads?.find(item => typeof item?.text === 'string' && item.text.trim());
-      if (reply?.text) {
-        return reply.text.trim();
-      }
-
-      if (typeof payload?.result?.text === 'string' && payload.result.text.trim()) {
-        return payload.result.text.trim();
-      }
-
-      if (typeof payload?.text === 'string' && payload.text.trim()) {
-        return payload.text.trim();
-      }
-    } catch {
-      return '';
-    }
-
-    return '';
+    return this.provider._extractTextFromJson(stdout);
   }
 
   /**
@@ -104,28 +279,10 @@ class OpenClawAdapter {
    * @returns {string}
    */
   _extractReplyTextFromPlain(stdout) {
-    if (typeof stdout !== 'string' || !stdout.trim()) {
-      return '';
+    if (typeof this.provider.extractTextFromPlain === 'function') {
+      return this.provider.extractTextFromPlain(stdout);
     }
-
-    const lines = stdout
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean);
-
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (
-        line.startsWith('Config warnings:') ||
-        line.startsWith('- plugins.entries.') ||
-        line.startsWith('Gateway agent failed;')
-      ) {
-        continue;
-      }
-      return line;
-    }
-
-    return '';
+    return this.provider._extractTextFromPlain(stdout);
   }
 
   /**
@@ -134,13 +291,86 @@ class OpenClawAdapter {
    * @returns {string}
    */
   _formatErrorReason(error) {
-    if (!error) {
-      return 'unknown error';
+    if (typeof this.provider.formatErrorReason === 'function') {
+      return this.provider.formatErrorReason(error);
+    }
+    return this.provider._formatErrorReason(error);
+  }
+
+  _looksLikeProviderErrorText(text = '') {
+    const normalized = String(text || '').trim().toLowerCase();
+    if (!normalized) return false;
+    return (
+      normalized.startsWith('http 4') ||
+      normalized.startsWith('http 5') ||
+      normalized.startsWith('error:') ||
+      normalized.includes('all models failed') ||
+      normalized.includes('range of input length should be') ||
+      normalized.includes('request was aborted') ||
+      normalized.includes('timed out') ||
+      normalized.includes('timeout') ||
+      normalized.includes('spawn openclaw') ||
+      normalized.includes('enoent') ||
+      normalized.includes('config invalid') ||
+      normalized.includes('invalid config')
+    );
+  }
+
+  _isRetryableProviderError(errorText = '') {
+    const normalized = String(errorText || '').trim().toLowerCase();
+    if (!normalized) return false;
+    if (normalized.includes('enoent') || normalized.includes('config invalid') || normalized.includes('invalid config')) {
+      return false;
+    }
+    return (
+      normalized.includes('timeout') ||
+      normalized.includes('timed out') ||
+      normalized.includes('request was aborted') ||
+      normalized.includes('econnreset') ||
+      normalized.includes('econnrefused') ||
+      normalized.includes('gateway') ||
+      normalized.includes('http 429') ||
+      normalized.includes('http 5')
+    );
+  }
+
+  async _sleep(ms) {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async _completeWithRetry(input = {}, contextMeta = {}) {
+    const maxRetries = this.config.retry.maxRetries;
+    const retryDelayMs = this.config.retry.retryDelayMs;
+    let lastResult = null;
+    let attemptsUsed = 0;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      attemptsUsed = attempt;
+      const result = await this.provider.complete(input);
+      lastResult = result;
+      if (result?.ok !== false) {
+        return {
+          result,
+          retryCount: attempt
+        };
+      }
+
+      const reason = result?.error || '';
+      const shouldRetry = attempt < maxRetries && this._isRetryableProviderError(reason);
+      if (!shouldRetry) {
+        break;
+      }
+
+      this.logger.warn?.(
+        `[OpenClawAdapter] retrying provider attempt=${attempt + 1} requestId=${contextMeta.requestId || ''} session=${contextMeta.sessionId || ''} reason=${reason}`
+      );
+      await this._sleep(retryDelayMs * (attempt + 1));
     }
 
-    const stderrText = typeof error.stderr === 'string' ? error.stderr.trim() : '';
-    const message = stderrText || error.message || 'unknown error';
-    return message.slice(0, 1000);
+    return {
+      result: lastResult,
+      retryCount: attemptsUsed
+    };
   }
 
   /**
@@ -149,57 +379,128 @@ class OpenClawAdapter {
    * @returns {Promise<Object>} 解析后的响应（兼容 protocol.parseResponse）
    */
   async processMessage(protocolRequest) {
-    const { subagentLabel, timeout } = this.config;
-    
-    // 提取消息内容，优先 JSON 模式调用子代理
-    const messageContent = typeof protocolRequest?.message?.content === 'string'
-      ? protocolRequest.message.content.trim()
-      : '';
-    if (!messageContent) {
-      return this._buildProtocolResponse(this._getRandomFallback(), 'empty message content');
-    }
+    return this._runInSessionQueue(protocolRequest, async () => {
+      const messageContent = this._appendEmotionInstruction(this._buildContextPrompt(protocolRequest));
+      if (!messageContent) {
+        return this._buildProtocolResponse(this._getRandomFallback(), 'empty message content');
+      }
 
-    const timeoutSeconds = Math.max(1, Math.ceil(timeout / 1000));
-    const baseArgs = ['agent', '--agent', subagentLabel, '--message', messageContent, '--timeout', String(timeoutSeconds)];
-    let lastError = null;
-
-    try {
-      const { stdout } = await execFileAsync('openclaw', [...baseArgs, '--json'], {
-        timeout: timeout,
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024
+      const { result } = await this._completeWithRetry({
+        agentLabel: this.config.subagentLabel,
+        message: messageContent,
+        timeoutMs: this.config.timeout,
+        sessionId: this._buildConversationSessionId(protocolRequest),
+        statefulSession: this.config.useNativeSessionContext === true,
+        local: this.config.local,
+        json: true
+      }, {
+        requestId: protocolRequest?.requestId || '',
+        sessionId: protocolRequest?.session?.channelId || protocolRequest?.session?.chatId || ''
       });
 
-      const jsonReply = this._extractReplyTextFromJson(stdout);
-      if (jsonReply) {
-        return this._buildProtocolResponse(jsonReply);
+      if (result.jsonText) {
+        return this._buildProtocolResponse(result.jsonText);
       }
-      lastError = new Error('OpenClaw JSON output did not contain reply text.');
-    } catch (error) {
-      lastError = error;
-    }
 
-    // 回退：兼容非 JSON 输出格式
-    try {
-      const { stdout } = await execFileAsync('openclaw', baseArgs, {
-        timeout: timeout,
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024
-      });
-
-      const plainReply = this._extractReplyTextFromPlain(stdout);
-      if (plainReply) {
-        return this._buildProtocolResponse(plainReply);
+      if (!result.ok) {
+        const reason = result.error || 'unknown error';
+        this.logger.error?.('[OpenClawAdapter] Error processing message:', reason);
+        return this._buildProtocolResponse(this._getRandomFallback(), reason);
       }
-      lastError = new Error('OpenClaw plain output did not contain reply text.');
-    } catch (error) {
-      lastError = error;
-    }
 
-    const reason = this._formatErrorReason(lastError);
-    console.error('[OpenClawAdapter] Error processing message:', reason);
-    return this._buildProtocolResponse(this._getRandomFallback(), reason);
+      this.logger.error?.('[OpenClawAdapter] Error processing message:', 'OpenClaw output did not contain reply text.');
+      return this._buildProtocolResponse(
+        this._getRandomFallback(),
+        'OpenClaw output did not contain reply text.'
+      );
+    });
   }
+
+  async processWorkflowStep(workflowInput = {}) {
+    const protocolRequest = workflowInput.protocolRequest || {};
+
+    return this._runInSessionQueue(protocolRequest, async () => {
+      const prompt = this._buildWorkflowPrompt(workflowInput);
+
+      if (!prompt) {
+        return normalizeWorkflowStepDecision({
+          status: 'final',
+          finalOutput: {
+            mode: 'reply',
+            text: this._getRandomFallback(),
+            replySegments: []
+          },
+          audit: {
+            reason: 'empty workflow prompt',
+            blocked: false
+          }
+        });
+      }
+
+      const { result, retryCount } = await this._completeWithRetry({
+        agentLabel: this.config.subagentLabel,
+        message: prompt,
+        timeoutMs: this.config.timeout,
+        sessionId: this._buildConversationSessionId(protocolRequest),
+        statefulSession: this.config.useNativeSessionContext === true,
+        local: this.config.local,
+        json: true
+      }, {
+        requestId: protocolRequest?.requestId || '',
+        sessionId: protocolRequest?.session?.channelId || protocolRequest?.session?.chatId || ''
+      });
+      const rawReply = result.jsonText || result.plainText || '';
+      if (!result.ok) {
+        return normalizeWorkflowStepDecision({
+          status: 'error',
+          audit: {
+            reason: `provider error: ${result.error || 'unknown error'}`,
+            blocked: false,
+            retryCount
+          }
+        });
+      }
+
+      const decision = this._parseWorkflowDecisionText(rawReply);
+      if (decision) {
+        decision.audit = {
+          ...(decision.audit || {}),
+          retryCount
+        };
+        return decision;
+      }
+
+      if (this._looksLikeProviderErrorText(rawReply)) {
+        return normalizeWorkflowStepDecision({
+          status: 'error',
+          audit: {
+            reason: `provider error text: ${rawReply.slice(0, 600)}`,
+            blocked: false,
+            retryCount
+          }
+        });
+      }
+
+      return normalizeWorkflowStepDecision({
+        status: 'final',
+        finalOutput: {
+          mode: 'reply',
+          text: rawReply || this._getRandomFallback(),
+          replySegments: []
+        },
+        audit: {
+          reason: 'decision_parse_fallback',
+          blocked: false,
+          retryCount
+        }
+      });
+    });
+  }
+}
+
+function toPositiveInt(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 ? Math.floor(num) : fallback;
 }
 
 module.exports = { OpenClawAdapter };

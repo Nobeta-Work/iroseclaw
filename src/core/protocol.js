@@ -10,16 +10,19 @@ const { generateRequestId } = require('../utils/json-utils');
  * @param {Object} session - 会话信息 { userId, chatId, messageId, platform }
  * @param {Object} message - 消息内容 { content, mentionIds, isBotMentioned }
  * @param {Object} permissionCtx - 权限上下文 { isAdmin, isSystemRequest, isOverreach, allowedSkills }
+ * @param {Object} context - 对话上下文
  * @returns {Object} - 完整的请求对象
  */
-const buildRequest = (session, message, permissionCtx) => {
+const buildRequest = (session, message, permissionCtx, context = {}) => {
   return {
     requestId: generateRequestId(),
     timestamp: Date.now(),
     version: "1.0",
     session: {
       userId: session?.userId || '',
+      username: session?.username || '',
       chatId: session?.chatId || '',
+      channelId: session?.channelId || session?.chatId || '',
       messageId: session?.messageId || '',
       platform: session?.platform || 'iirose'
     },
@@ -35,7 +38,19 @@ const buildRequest = (session, message, permissionCtx) => {
       allowedSkills: permissionCtx?.allowedSkills || []
     },
     context: {
-      recentMessages: permissionCtx?.recentMessages || []
+      triggerUser: context?.triggerUser || {
+        id: session?.userId || '',
+        name: session?.username || ''
+      },
+      currentMessage: context?.currentMessage || {
+        userId: session?.userId || '',
+        username: session?.username || '',
+        content: message?.content || '',
+        timestamp: Date.now()
+      },
+      recentMessages: context?.recentMessages || permissionCtx?.recentMessages || [],
+      historySummary: context?.historySummary || [],
+      anchorCount: Number.isFinite(context?.anchorCount) ? context.anchorCount : 0
     }
   };
 };
