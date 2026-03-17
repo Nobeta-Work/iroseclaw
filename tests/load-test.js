@@ -34,14 +34,14 @@ test('Load runtime config', () => {
   if (!config.runtime?.mode) throw new Error('Missing runtime.mode');
   if (!config.workflow?.maxSteps) throw new Error('Missing workflow.maxSteps');
   if (!config.pluginConfigs || typeof config.pluginConfigs !== 'object') throw new Error('Missing pluginConfigs');
-  if (!config.openclaw?.subagentLabel) throw new Error('Missing openclaw.subagentLabel');
+  if (!config.openclaw?.agentLabel) throw new Error('Missing openclaw.agentLabel');
   if (!config.rateLimit?.perMinute) throw new Error('Missing rateLimit.perMinute');
   
   console.log(`   Bot: ${config.bot.name} (${config.bot.uid})`);
   console.log(`   Room: ${config.roomId}`);
   console.log(`   Admins: ${config.admins.length}`);
   console.log(`   Runtime mode: ${config.runtime.mode}`);
-  console.log(`   Subagent: ${config.openclaw.subagentLabel}`);
+  console.log(`   OpenClaw agent: ${config.openclaw.agentLabel}`);
 });
 
 // Test 2: Load OpenClawAdapter

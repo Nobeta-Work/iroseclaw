@@ -40,38 +40,29 @@ npm run dev
 2. `config/app.json`
 3. 环境变量（如 `IROSE_BOT_UID`、`IROSE_ADMINS`）
 
-## AI 个性化配置
+## AI 人设与 OpenClaw 边界
 
-机器人“个性化”相关配置分为 4 层：
+本项目采用“提示词工程主导人设”：
 
-1. 房间展示签名（IIROSE 资料签名）
-- 文件：`koishi.yml`
-- 字段：`plugins.koishi-plugin-adapter-iirose:iirose.signature`
-- 用途：显示在机器人资料页，不直接控制 AI 对话语气。
-
-2. OpenClaw 子代理选择
-- 文件：`config/app.json`（统一由 `src/config/runtime.js` 加载）
-- 字段：`openclaw.subagentLabel`
-- 环境变量覆盖：`IROSE_OPENCLAW_SUBAGENT`
-- 用途：指定聊天时调用哪个 OpenClaw agent。
-
-2.1 OpenClaw 调用边界
-- 字段：`openclaw.stateless`
-- 默认值：`true`
-- 用途：将 OpenClaw 作为近似普通 AI provider 使用，默认每次请求走隔离 session，不复用 agent 会话记忆。
-- 只有在明确需要依赖 OpenClaw 原生会话上下文时，才应关闭它并配合 `openclaw.useNativeSessionContext=true` 使用。
-
-3. 对话语气/人格（核心）
-- 文件：`~/.openclaw/agents/<subagentLabel>/agent/config.json`
-- 字段：`systemPrompt`
-- 用途：控制语气、风格、回复长度、角色设定等。
-
-4. 失败兜底回复词条
+1. 人设与风格（唯一入口）
 - 文件：`config/app.json`
-- 字段：`fallbackResponses`
-- 用途：当 OpenClaw 无法返回有效文本时，随机返回兜底文案。
+- 字段：`workflow.promptProfile`
+- 用途：注入机器人身份、风格说明与当前风格（平淡/热情/爱慕等），由项目 Prompt Compiler 统一拼装。
 
-说明：失败类兜底回复已统一收敛到 `fallbackResponses`（含 OpenClaw 失败、无回复、技能执行异常、消息处理异常）。权限提示和限流提示等业务文案仍独立定义。
+2. OpenClaw 仅作为被代理 AI 接口（transport）
+- 文件：`config/app.json`
+- 字段：`openclaw.agentLabel`（兼容旧字段 `openclaw.subagentLabel`）
+- 环境变量覆盖：`IROSE_OPENCLAW_AGENT`（兼容 `IROSE_OPENCLAW_SUBAGENT`）
+- 用途：仅指定 transport agent，不承载人格。
+
+3. 会话策略
+- 字段：`openclaw.stateless` / `openclaw.useNativeSessionContext`
+- 默认：`stateless=true`
+- 说明：默认按无状态 provider 使用。仅当你明确需要 OpenClaw 原生会话记忆时，再开启 `useNativeSessionContext=true`。
+
+4. 失败兜底
+- 字段：`fallbackResponses`
+- 用途：provider 失败、无回复、执行异常时统一兜底。
 
 ## 情绪表情包
 
@@ -149,26 +140,50 @@ module.exports = {
 }
 ```
 
-## 音乐 Provider 说明
+## 音乐插件
 
-当前点歌链路已支持可配置的播放源 provider 链，用于将“搜歌元数据”和“最终播放地址”解耦。
+用途：根据“点歌”请求检索歌曲并返回可播放链接。插件支持多播放源 provider 级联兜底。
 
-- 默认 provider 顺序：`iarcDirect -> metingRedirect -> neteaseOuter`
-- 搜索与详情：仍由当前 bot 侧实现负责
-- 播放地址：由 provider 决定
+核心配置（`config/app.json`）：
 
-关于 `iarcDirect`：
+- `music.playUrlProviders`：播放源顺序（如 `["iarcDirect","metingRedirect","neteaseOuter"]`）
+- `music.providers.customTemplate.enabled/urlTemplate`
+- `music.providers.iarcDirect.enabled/urlTemplate`
+- `music.providers.metingRedirect.enabled/endpointTemplate`
+- `music.providers.neteaseOuter.enabled/urlTemplate`
 
-- 参考项目：<https://github.com/jingming295/IIROSE-MEDIA-WEB>
-- 当前实现只参考了该项目中公开可见的第三方播放地址模式：
-  - `https://v.iarc.top/?type=url&id={{id}}#.mp3`
-- 当前实现**没有**引入或执行该项目的其他核心代码，包括但不限于：
-  - 前端 UI
-  - DOM/iframe 注入逻辑
-  - WebSocket 发送器
-  - localStorage 设置逻辑
-  - 加密搜索/详情请求实现
-  - 其他客户端插件内部逻辑
+最小示例：
+
+```json
+{
+  "music": {
+    "playUrlProviders": ["iarcDirect", "metingRedirect", "neteaseOuter"]
+  }
+}
+```
+
+常见调优：
+
+- 某个播放源不稳定时，将其从 `playUrlProviders` 中移到后面或临时移除。
+- 需要私有播放地址时，启用 `customTemplate` 并配置 `urlTemplate`。
+
+## 内置插件列表
+
+以下为当前主要内置插件与用途（配置入口统一在 `config/app.json`，插件级配置走 `pluginConfigs.<pluginName>`）：
+
+- `builtin-help`：帮助信息与可用指令概览（`help.show`）
+- `builtin-music`：点歌与音乐播放链接（`music.play_netease`）
+- `builtin-messaging-tools`：统一输出工具（`reply.current` / `message.route`）
+- `builtin-workflow-prompt-profile`：管理员可查看/切换提示词风格（`workflow.prompt.style.*`）
+- `builtin-openclaw-provider` / `builtin-openai-compatible-providers`：模型 provider 注册
+- `builtin-workflow-planners`：workflow planner 注册（llm / llm-default）
+- `iirose-system-tools`：论坛/任务/排行榜查询
+- `iirose-user-profile-tools`：用户资料查询
+- `iirose-room-tools`：房间查询/切换
+- `games-tictactoe`：井字棋
+- `games-number-guess`：猜数字
+- `proactive-topic-engagement`：主动介入（管理员控制开关，`pluginConfigs.proactive-topic-engagement`）
+- `remote-room-monitoring`：房间监控分析（`pluginConfigs.remote-room-monitoring`）
 
 ## 主动调度插件
 
@@ -219,7 +234,7 @@ module.exports = {
 - `runtime.mode`
 - `workflow.maxSteps` / `workflow.maxToolCallsPerStep` / `workflow.allowParallelReadTools`
 - `workflow.promptProfile`（机器人人设、风格集合、默认风格）
-- `openclaw.*`
+- `openclaw.agentLabel` / `openclaw.timeout` / `openclaw.stateless` / `openclaw.useNativeSessionContext`
 - `providers.default` / `providers.named`
 - `music.*`
 - `messageMemory.*`
@@ -252,7 +267,7 @@ npm run config:restore -- /tmp/iroseclaw-secrets-<timestamp>.json
 ## 架构
 
 ```
-IIROSE 消息 → @检测 (UID) → 权限判定 → OpenClaw 子代理 → 结构化 JSON → 技能/脚本 → 回复
+IIROSE 消息 → @检测 (UID) → 权限判定 → Prompt Compiler(注入人设/风格) → OpenClaw Provider(transport) → 结构化 JSON → 技能/脚本 → 回复
 ```
 
 ## 目录结构

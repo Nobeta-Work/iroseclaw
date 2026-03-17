@@ -93,6 +93,12 @@ function getWorkflowPlannerName(finalConfig) {
     : '';
 }
 
+function resolveOpenClawAgentLabel(finalConfig = {}) {
+  return finalConfig.openclaw?.agentLabel
+    || finalConfig.openclaw?.subagentLabel
+    || 'iirose-transport';
+}
+
 function requiresLegacyAdapter(finalConfig) {
   const runtimeMode = finalConfig?.runtime?.mode || 'legacy';
   if (runtimeMode === 'legacy') {
@@ -173,7 +179,7 @@ function resolveModelProvider(finalConfig, context = {}) {
 
   if (providerName === 'openclaw' || providerName === 'openclaw-agent' || !providerName) {
     return new OpenClawAgentBridge({
-      subagentLabel: finalConfig.openclaw?.subagentLabel || 'iirose-chat',
+      agentLabel: resolveOpenClawAgentLabel(finalConfig),
       timeout: finalConfig.openclaw?.timeout || 30000,
       local: finalConfig.openclaw?.local !== false,
       stateless: finalConfig.openclaw?.stateless !== false,
@@ -309,7 +315,7 @@ function apply(ctx, config = {}) {
   const getLegacyAdapter = () => {
     if (!adapter) {
       adapter = new OpenClawAdapter({
-        subagentLabel: finalConfig.openclaw?.subagentLabel || 'iirose-chat',
+        agentLabel: resolveOpenClawAgentLabel(finalConfig),
         timeout: finalConfig.openclaw?.timeout || 30000,
         local: finalConfig.openclaw?.local !== false,
         stateless: finalConfig.openclaw?.stateless !== false,

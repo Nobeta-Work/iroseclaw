@@ -8,7 +8,7 @@ module.exports = {
   name: 'builtin-openclaw-provider',
   apply(host, context) {
     const createBridge = ({ config, logger }) => new OpenClawAgentBridge({
-      subagentLabel: config.openclaw?.subagentLabel || 'iirose-chat',
+      agentLabel: config.openclaw?.agentLabel || config.openclaw?.subagentLabel || 'iirose-transport',
       timeout: config.openclaw?.timeout || 30000,
       local: config.openclaw?.local !== false,
       stateless: config.openclaw?.stateless !== false,

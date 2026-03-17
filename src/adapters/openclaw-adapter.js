@@ -13,7 +13,8 @@ const { buildContextPrompt } = require('../runtime/workflow/prompt/serializers')
 class OpenClawAdapter {
   /**
    * @param {Object} config - OpenClaw 配置
-   * @param {string} config.subagentLabel - 子代理标签
+   * @param {string} [config.agentLabel] - OpenClaw transport agent 标签
+   * @param {string} [config.subagentLabel] - 兼容旧字段，等价于 agentLabel
    * @param {number} config.timeout - 超时时间（毫秒）
    * @param {string[]} config.fallbackResponses - 备用响应列表
    * @param {Object} [config.meme] - 表情包情绪配置
@@ -22,8 +23,11 @@ class OpenClawAdapter {
    */
   constructor(config) {
     const input = config && typeof config === 'object' ? config : {};
+    const resolvedAgentLabel = input.agentLabel || input.subagentLabel || 'iirose-transport';
     this.config = {
-      subagentLabel: input.subagentLabel || 'iirose',
+      agentLabel: resolvedAgentLabel,
+      // backward compatibility for old call sites/tests
+      subagentLabel: resolvedAgentLabel,
       timeout: input.timeout || 30000,
       local: input.local !== false,
       stateless: input.stateless !== false,
@@ -45,7 +49,7 @@ class OpenClawAdapter {
     this.pickFallback = createFallbackPicker(this.config.fallbackResponses);
     this.sessionQueues = new Map();
     this.provider = input.provider || new OpenClawAgentBridge({
-      subagentLabel: this.config.subagentLabel,
+      agentLabel: this.config.agentLabel,
       timeout: this.config.timeout,
       local: this.config.local,
       stateless: this.config.stateless,
@@ -220,7 +224,7 @@ class OpenClawAdapter {
 
   _buildCommandArgs(protocolRequest, messageContent) {
     return this.provider.buildAgentArgs({
-      agentLabel: this.config.subagentLabel,
+      agentLabel: this.config.agentLabel,
       message: messageContent,
       timeoutMs: this.config.timeout,
       sessionId: this._buildConversationSessionId(protocolRequest),
@@ -386,7 +390,7 @@ class OpenClawAdapter {
       }
 
       const { result } = await this._completeWithRetry({
-        agentLabel: this.config.subagentLabel,
+        agentLabel: this.config.agentLabel,
         message: messageContent,
         timeoutMs: this.config.timeout,
         sessionId: this._buildConversationSessionId(protocolRequest),
@@ -438,7 +442,7 @@ class OpenClawAdapter {
       }
 
       const { result, retryCount } = await this._completeWithRetry({
-        agentLabel: this.config.subagentLabel,
+        agentLabel: this.config.agentLabel,
         message: prompt,
         timeoutMs: this.config.timeout,
         sessionId: this._buildConversationSessionId(protocolRequest),

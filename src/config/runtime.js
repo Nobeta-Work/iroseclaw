@@ -20,6 +20,7 @@ const ENV_KEYS = [
   'IROSE_ROOM_ID',
   'IROSE_ADMINS',
   'IROSE_RUNTIME_MODE',
+  'IROSE_OPENCLAW_AGENT',
   'IROSE_OPENCLAW_SUBAGENT',
   'IROSE_OPENCLAW_TIMEOUT',
   'IROSE_MEME_ENABLED',
@@ -99,7 +100,8 @@ const DEFAULT_CONFIG = {
     persist: true
   },
   openclaw: {
-    subagentLabel: 'iirose',
+    agentLabel: 'iirose-transport',
+    subagentLabel: 'iirose-transport',
     timeout: 30000,
     local: true,
     stateless: true,
@@ -287,10 +289,18 @@ function getEnvOverride() {
     };
   }
 
-  if (env.IROSE_OPENCLAW_SUBAGENT || env.IROSE_OPENCLAW_TIMEOUT) {
+  if (env.IROSE_OPENCLAW_AGENT || env.IROSE_OPENCLAW_SUBAGENT || env.IROSE_OPENCLAW_TIMEOUT) {
     override.openclaw = {};
+    if (env.IROSE_OPENCLAW_AGENT) {
+      override.openclaw.agentLabel = env.IROSE_OPENCLAW_AGENT;
+      // backward compatible mirror
+      override.openclaw.subagentLabel = env.IROSE_OPENCLAW_AGENT;
+    }
     if (env.IROSE_OPENCLAW_SUBAGENT) {
       override.openclaw.subagentLabel = env.IROSE_OPENCLAW_SUBAGENT;
+      if (!env.IROSE_OPENCLAW_AGENT) {
+        override.openclaw.agentLabel = env.IROSE_OPENCLAW_SUBAGENT;
+      }
     }
     if (env.IROSE_OPENCLAW_TIMEOUT) {
       override.openclaw.timeout = parseInteger(env.IROSE_OPENCLAW_TIMEOUT, DEFAULT_CONFIG.openclaw.timeout);
@@ -435,6 +445,14 @@ function normalizeConfig(config) {
   normalized.workflowRunLog.persist = normalized.workflowRunLog.persist !== false;
 
   normalized.openclaw = normalized.openclaw || {};
+  const openclawAgentLabel = typeof normalized.openclaw.agentLabel === 'string' && normalized.openclaw.agentLabel.trim()
+    ? normalized.openclaw.agentLabel.trim()
+    : (typeof normalized.openclaw.subagentLabel === 'string' && normalized.openclaw.subagentLabel.trim()
+      ? normalized.openclaw.subagentLabel.trim()
+      : DEFAULT_CONFIG.openclaw.agentLabel);
+  normalized.openclaw.agentLabel = openclawAgentLabel;
+  // Keep legacy field for backward compatibility.
+  normalized.openclaw.subagentLabel = openclawAgentLabel;
   normalized.openclaw.timeout = parseInteger(normalized.openclaw.timeout, DEFAULT_CONFIG.openclaw.timeout);
   normalized.openclaw.local = normalized.openclaw.local !== false;
   normalized.openclaw.stateless = normalized.openclaw.stateless !== false;

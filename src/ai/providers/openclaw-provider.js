@@ -69,8 +69,11 @@ function getEntryCandidates(packageDir) {
 class OpenClawAgentBridge extends BaseModelProvider {
   constructor(options = {}) {
     super(options);
+    const resolvedAgentLabel = options.agentLabel || options.subagentLabel || 'iirose-transport';
     this.config = {
-      subagentLabel: options.subagentLabel || 'iirose',
+      agentLabel: resolvedAgentLabel,
+      // backward compatibility
+      subagentLabel: resolvedAgentLabel,
       timeout: options.timeout || 30000,
       local: options.local !== false,
       stateless: options.stateless !== false
@@ -85,6 +88,11 @@ class OpenClawAgentBridge extends BaseModelProvider {
     this.openclawInvocation = null;
     this.openclawInvocationLogged = false;
     this.supportsStatefulSessions = true;
+    if (!String(resolvedAgentLabel).toLowerCase().includes('transport')) {
+      this.logger.warn?.(
+        `[OpenClawAgentBridge] agentLabel="${resolvedAgentLabel}" is recommended to be a transport-only agent; persona should come from project prompts`
+      );
+    }
   }
 
   _buildExecutableInvocation(command, argsPrefix = [], label = '') {
@@ -204,7 +212,7 @@ class OpenClawAgentBridge extends BaseModelProvider {
     if (stateful || this.config.stateless === false) {
       return this._sanitizeSessionId(requested, 'irose-chat');
     }
-    return this._buildStatelessSessionId(requested || input.agentLabel || this.config.subagentLabel);
+    return this._buildStatelessSessionId(requested || input.agentLabel || this.config.agentLabel);
   }
 
   _buildPromptText(input = {}) {
@@ -241,7 +249,7 @@ class OpenClawAgentBridge extends BaseModelProvider {
     const args = [
       'agent',
       '--agent',
-      input.agentLabel || this.config.subagentLabel,
+      input.agentLabel || this.config.agentLabel,
       '--message',
       typeof input.message === 'string' ? input.message : '',
       '--timeout',
@@ -389,7 +397,7 @@ class OpenClawAgentBridge extends BaseModelProvider {
       ? Number(input.timeoutMs)
       : this.config.timeout;
     const args = this.buildAgentArgs({
-      agentLabel: input.agentLabel || this.config.subagentLabel,
+      agentLabel: input.agentLabel || this.config.agentLabel,
       message,
       timeoutMs,
       sessionId: input.sessionId || '',
