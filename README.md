@@ -64,6 +64,45 @@ npm run dev
 - 字段：`fallbackResponses`
 - 用途：provider 失败、无回复、执行异常时统一兜底。
 
+5. 普通 OpenAI 兼容 API（与 OpenClaw 同级）
+- 文件：`config/app.json`
+- 字段：`providers.default` + `providers.named.<providerName>`
+- 用途：直接接入任意兼容 OpenAI Chat Completions 的普通 AI API（`baseUrl` / `apiKey` / `model`）。
+
+示例（将默认 provider 切到普通 API）：
+
+```json
+{
+  "providers": {
+    "default": "general-http",
+    "named": {
+      "general-http": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.example.com/v1",
+        "apiKey": "your_api_key",
+        "model": "gpt-4.1-mini",
+        "endpointPath": "/chat/completions",
+        "timeout": 30000,
+        "maxTokens": 0,
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+可选字段说明：
+
+- `endpointPath`：默认 `/chat/completions`
+- `headers`：附加请求头（对象）
+- `timeout`：请求超时（毫秒）
+- `maxTokens`：最大输出 token（`0` 表示沿用 provider 默认）
+
+说明：
+
+- 该模式下，OpenClaw 可保留在配置中但不作为默认 provider 使用。
+- 人设仍由 `workflow.promptProfile` 注入，不依赖 provider 侧人格设置。
+
 ## 情绪表情包
 
 聊天链路支持“方案一”：
