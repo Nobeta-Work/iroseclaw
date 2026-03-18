@@ -5,6 +5,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile, spawnSync } = require('child_process');
 const { promisify } = require('util');
@@ -66,6 +67,40 @@ function getEntryCandidates(packageDir) {
   ]);
 }
 
+function pickMeaningfulErrorLine(text = '') {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(line => line.replace(ANSI_ESCAPE_REGEX, '').trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return '';
+  }
+
+  const noisyPrefixes = [
+    'Config warnings:',
+    '- plugins.entries.',
+    '[plugins]',
+    '(Use `node --trace-warnings',
+    '(node:',
+    '[agent/embedded]'
+  ];
+
+  const meaningful = lines.filter((line) => {
+    return !noisyPrefixes.some(prefix => line.startsWith(prefix));
+  });
+
+  const candidates = meaningful.length > 0 ? meaningful : lines;
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const line = candidates[i];
+    if (/^Error:/i.test(line) || /all models failed/i.test(line) || /HTTP \d{3}/i.test(line)) {
+      return line;
+    }
+  }
+
+  return candidates[candidates.length - 1] || '';
+}
+
 class OpenClawAgentBridge extends BaseModelProvider {
   constructor(options = {}) {
     super(options);
@@ -76,7 +111,14 @@ class OpenClawAgentBridge extends BaseModelProvider {
       subagentLabel: resolvedAgentLabel,
       timeout: options.timeout || 30000,
       local: options.local !== false,
-      stateless: options.stateless !== false
+      stateless: options.stateless !== false,
+      thinking: typeof options.thinking === 'string' ? options.thinking.trim().toLowerCase() : '',
+      isolatedStatePerRequest: options.isolatedStatePerRequest === true,
+      cleanupStateDirAfterRequest: options.cleanupStateDirAfterRequest !== false,
+      stateDirBase: typeof options.stateDirBase === 'string' && options.stateDirBase.trim()
+        ? path.resolve(options.stateDirBase.trim())
+        : path.join(os.tmpdir(), 'iroseclaw-openclaw'),
+      configPath: typeof options.configPath === 'string' ? options.configPath.trim() : ''
     };
     this.logger = options.logger || console;
     this.execFileAsync = typeof options.execFileAsync === 'function'
@@ -255,7 +297,7 @@ class OpenClawAgentBridge extends BaseModelProvider {
       '--timeout',
       String(timeoutSeconds),
       '--session-id',
-      this._resolveRequestSessionId(input)
+      input.resolvedSessionId || this._resolveRequestSessionId(input)
     ];
 
     if ((input.local ?? this.config.local) !== false) {
@@ -266,7 +308,42 @@ class OpenClawAgentBridge extends BaseModelProvider {
       args.push('--json');
     }
 
+    const thinking = typeof input.thinking === 'string' ? input.thinking.trim().toLowerCase() : '';
+    if (thinking) {
+      args.push('--thinking', thinking);
+    }
+
     return args;
+  }
+
+  _resolveConfigPath() {
+    const explicit = this.config.configPath || process.env.OPENCLAW_CONFIG_PATH || process.env.CLAWDBOT_CONFIG_PATH || '';
+    if (explicit) {
+      return explicit;
+    }
+    return path.join(os.homedir(), '.openclaw', 'openclaw.json');
+  }
+
+  _prepareExecutionEnv(resolvedSessionId) {
+    if (!this.config.isolatedStatePerRequest) {
+      return {
+        env: process.env,
+        stateDir: ''
+      };
+    }
+
+    const safeId = this._sanitizeSessionId(resolvedSessionId, generateRequestId());
+    const stateDir = path.join(this.config.stateDirBase, safeId);
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    return {
+      env: {
+        ...process.env,
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_CONFIG_PATH: this._resolveConfigPath()
+      },
+      stateDir
+    };
   }
 
   _extractJsonPayload(stdout) {
@@ -378,8 +455,12 @@ class OpenClawAgentBridge extends BaseModelProvider {
     const stdoutText = typeof error.stdout === 'string' ? error.stdout.trim() : '';
     const jsonText = this._extractTextFromJson(stdoutText);
     const plainText = this._extractTextFromPlain(stdoutText);
+    const stderrLine = pickMeaningfulErrorLine(stderrText);
+    const stdoutLine = pickMeaningfulErrorLine(stdoutText);
     const message = jsonText
       || plainText
+      || stderrLine
+      || stdoutLine
       || stderrText
       || stdoutText
       || error.message
@@ -396,23 +477,32 @@ class OpenClawAgentBridge extends BaseModelProvider {
     const timeoutMs = Number.isFinite(Number(input.timeoutMs))
       ? Number(input.timeoutMs)
       : this.config.timeout;
+    const resolvedSessionId = this._resolveRequestSessionId({
+      agentLabel: input.agentLabel || this.config.agentLabel,
+      sessionId: input.sessionId || '',
+      statefulSession: input.statefulSession === true
+    });
     const args = this.buildAgentArgs({
       agentLabel: input.agentLabel || this.config.agentLabel,
       message,
       timeoutMs,
       sessionId: input.sessionId || '',
+      resolvedSessionId,
       statefulSession: input.statefulSession === true,
       local: input.local,
-      json: input.json === true
+      json: input.json === true,
+      thinking: input.thinking || this.config.thinking
     });
     const execution = this._buildExecArgs(args);
     const execTimeout = timeoutMs + 15000;
+    const { env, stateDir } = this._prepareExecutionEnv(resolvedSessionId);
 
     try {
       const result = await this.execFileAsync(execution.command, execution.args, {
         timeout: execTimeout,
         encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024
+        maxBuffer: 10 * 1024 * 1024,
+        env
       });
       const stdout = typeof result?.stdout === 'string' ? result.stdout : '';
       const stderr = typeof result?.stderr === 'string' ? result.stderr : '';
@@ -459,6 +549,14 @@ class OpenClawAgentBridge extends BaseModelProvider {
         },
         error: this._formatErrorReason(error)
       };
+    } finally {
+      if (stateDir && this.config.cleanupStateDirAfterRequest) {
+        try {
+          fs.rmSync(stateDir, { recursive: true, force: true });
+        } catch {
+          // Ignore temp cleanup failures.
+        }
+      }
     }
   }
 }

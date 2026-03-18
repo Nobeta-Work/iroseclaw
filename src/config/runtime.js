@@ -105,7 +105,12 @@ const DEFAULT_CONFIG = {
     timeout: 30000,
     local: true,
     stateless: true,
-    useNativeSessionContext: false
+    useNativeSessionContext: false,
+    thinking: '',
+    isolatedStatePerRequest: false,
+    cleanupStateDirAfterRequest: true,
+    stateDirBase: '/tmp/iroseclaw-openclaw',
+    configPath: ''
   },
   providers: {
     default: 'openclaw',
@@ -445,11 +450,13 @@ function normalizeConfig(config) {
   normalized.workflowRunLog.persist = normalized.workflowRunLog.persist !== false;
 
   normalized.openclaw = normalized.openclaw || {};
-  const openclawAgentLabel = typeof normalized.openclaw.agentLabel === 'string' && normalized.openclaw.agentLabel.trim()
-    ? normalized.openclaw.agentLabel.trim()
-    : (typeof normalized.openclaw.subagentLabel === 'string' && normalized.openclaw.subagentLabel.trim()
-      ? normalized.openclaw.subagentLabel.trim()
-      : DEFAULT_CONFIG.openclaw.agentLabel);
+  const hasAgentLabel = typeof normalized.openclaw.agentLabel === 'string' && normalized.openclaw.agentLabel.trim();
+  const hasSubagentLabel = typeof normalized.openclaw.subagentLabel === 'string' && normalized.openclaw.subagentLabel.trim();
+  const currentAgentLabel = hasAgentLabel ? normalized.openclaw.agentLabel.trim() : '';
+  const currentSubagentLabel = hasSubagentLabel ? normalized.openclaw.subagentLabel.trim() : '';
+  const openclawAgentLabel = (hasSubagentLabel && (!hasAgentLabel || currentAgentLabel === DEFAULT_CONFIG.openclaw.agentLabel))
+    ? currentSubagentLabel
+    : (hasAgentLabel ? currentAgentLabel : DEFAULT_CONFIG.openclaw.agentLabel);
   normalized.openclaw.agentLabel = openclawAgentLabel;
   // Keep legacy field for backward compatibility.
   normalized.openclaw.subagentLabel = openclawAgentLabel;
@@ -457,6 +464,16 @@ function normalizeConfig(config) {
   normalized.openclaw.local = normalized.openclaw.local !== false;
   normalized.openclaw.stateless = normalized.openclaw.stateless !== false;
   normalized.openclaw.useNativeSessionContext = normalized.openclaw.useNativeSessionContext === true;
+  normalized.openclaw.thinking =
+    typeof normalized.openclaw.thinking === 'string' ? normalized.openclaw.thinking.trim().toLowerCase() : '';
+  normalized.openclaw.isolatedStatePerRequest = normalized.openclaw.isolatedStatePerRequest === true;
+  normalized.openclaw.cleanupStateDirAfterRequest = normalized.openclaw.cleanupStateDirAfterRequest !== false;
+  normalized.openclaw.stateDirBase =
+    typeof normalized.openclaw.stateDirBase === 'string' && normalized.openclaw.stateDirBase.trim()
+      ? normalized.openclaw.stateDirBase.trim()
+      : DEFAULT_CONFIG.openclaw.stateDirBase;
+  normalized.openclaw.configPath =
+    typeof normalized.openclaw.configPath === 'string' ? normalized.openclaw.configPath.trim() : '';
 
   normalized.providers = normalized.providers && typeof normalized.providers === 'object'
     ? { ...normalized.providers }
@@ -487,6 +504,9 @@ function normalizeConfig(config) {
               timeout: parseInteger(entry.timeout, DEFAULT_CONFIG.openclaw.timeout),
               maxTokens: parseInteger(entry.maxTokens, 0),
               enabled: entry.enabled !== false,
+              extraBody: entry.extraBody && typeof entry.extraBody === 'object' && !Array.isArray(entry.extraBody)
+                ? { ...entry.extraBody }
+                : {},
               headers: entry.headers && typeof entry.headers === 'object' && !Array.isArray(entry.headers)
                 ? Object.fromEntries(
                     Object.entries(entry.headers)

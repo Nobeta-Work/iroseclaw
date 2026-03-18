@@ -14,6 +14,6 @@ plugins:
     password: your_bot_password
     autoReconnect: true
     reconnectInterval: 5000
-    botStatus: "n"
+    botStatus: 'n'
     color: rgba(49, 31, 186, 1)
     signature: 我是人机

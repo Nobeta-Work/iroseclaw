@@ -53,6 +53,11 @@ class OpenClawAdapter {
       timeout: this.config.timeout,
       local: this.config.local,
       stateless: this.config.stateless,
+      thinking: input.thinking || '',
+      isolatedStatePerRequest: input.isolatedStatePerRequest === true,
+      cleanupStateDirAfterRequest: input.cleanupStateDirAfterRequest !== false,
+      stateDirBase: input.stateDirBase,
+      configPath: input.configPath,
       logger: input.logger || console
     });
   }

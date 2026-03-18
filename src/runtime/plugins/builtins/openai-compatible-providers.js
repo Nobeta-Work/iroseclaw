@@ -39,6 +39,7 @@ module.exports = {
         model: providerConfig.model,
         endpointPath: providerConfig.endpointPath,
         headers: providerConfig.headers,
+        extraBody: providerConfig.extraBody,
         timeout: providerConfig.timeout,
         maxTokens: providerConfig.maxTokens,
         logger: logger || console

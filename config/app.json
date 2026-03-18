@@ -98,13 +98,18 @@
     "persist": true
   },
   "openclaw": {
+    "agentLabel": "iirose",
     "subagentLabel": "iirose",
-    "timeout": 30000,
+    "timeout": 120000,
     "stateless": true,
-    "useNativeSessionContext": false
+    "useNativeSessionContext": false,
+    "thinking": "off",
+    "isolatedStatePerRequest": true,
+    "cleanupStateDirAfterRequest": true,
+    "stateDirBase": "/tmp/iroseclaw-openclaw"
   },
   "providers": {
-    "default": "openclaw",
+    "default": "modelscope-qwen3-235b",
     "named": {
       "analysis-http": {
         "type": "openai-compatible",
@@ -113,6 +118,17 @@
         "model": "gpt-4.1-mini",
         "timeout": 30000,
         "enabled": false
+      },
+      "modelscope-qwen3-235b": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api-inference.modelscope.cn/v1",
+        "apiKey": "your_api_key",
+        "model": "Qwen/Qwen3-235B-A22B",
+        "extraBody": {
+          "enable_thinking": false
+        },
+        "timeout": 120000,
+        "enabled": true
       }
     }
   },

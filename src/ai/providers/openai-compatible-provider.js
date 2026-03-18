@@ -27,6 +27,37 @@ function normalizeHeaders(headers = {}) {
   return normalized;
 }
 
+function normalizeExtraBody(value) {
+  if (value === null) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(item => normalizeExtraBody(item))
+      .filter(item => item !== undefined);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, entry]) => [normalizeText(key, 120), normalizeExtraBody(entry)])
+        .filter(([key, entry]) => key && entry !== undefined)
+    );
+  }
+
+  if (typeof value === 'string') {
+    const text = normalizeText(value, 120000);
+    return text || '';
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+
+  return undefined;
+}
+
 function normalizeMessage(message = {}) {
   if (!message || typeof message !== 'object') {
     return null;
@@ -160,6 +191,35 @@ function stringifyErrorPayload(payload) {
   }
 }
 
+function formatFetchError(error, timeoutMs) {
+  const aborted = error?.name === 'AbortError';
+  if (aborted) {
+    return `request timeout after ${timeoutMs}ms`;
+  }
+
+  const causeCode = typeof error?.cause?.code === 'string' ? error.cause.code : '';
+  const causeHost = typeof error?.cause?.hostname === 'string' ? error.cause.hostname : '';
+  const base = error?.message || 'request failed';
+  if (!causeCode && !causeHost) {
+    return base;
+  }
+
+  return [base, causeCode, causeHost].filter(Boolean).join(' ');
+}
+
+function isRetryableFetchError(error) {
+  if (!error) {
+    return false;
+  }
+
+  if (error?.name === 'AbortError') {
+    return true;
+  }
+
+  const causeCode = typeof error?.cause?.code === 'string' ? error.cause.code : '';
+  return ['EAI_AGAIN', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(causeCode);
+}
+
 class OpenAICompatibleProvider extends BaseModelProvider {
   constructor(options = {}) {
     super(options);
@@ -172,8 +232,9 @@ class OpenAICompatibleProvider extends BaseModelProvider {
         ? Math.max(1000, Math.floor(Number(options.timeout)))
         : 30000,
       headers: normalizeHeaders(options.headers),
+      extraBody: isPlainObject(options.extraBody) ? normalizeExtraBody(options.extraBody) : {},
       maxTokens: Number.isFinite(Number(options.maxTokens))
-        ? Math.max(1, Math.floor(Number(options.maxTokens)))
+        ? Math.max(0, Math.floor(Number(options.maxTokens)))
         : 0
     };
     this.label = options.label || options.provider || 'openai-compatible';
@@ -208,7 +269,9 @@ class OpenAICompatibleProvider extends BaseModelProvider {
   _buildBody(input = {}) {
     const body = {
       model: normalizeText(input.model, 200) || this.config.model,
-      messages: buildMessages(input)
+      messages: buildMessages(input),
+      ...this.config.extraBody,
+      ...(isPlainObject(input.extraBody) ? normalizeExtraBody(input.extraBody) : {})
     };
 
     if (input.json === true) {
@@ -216,7 +279,7 @@ class OpenAICompatibleProvider extends BaseModelProvider {
     }
 
     const maxTokens = Number.isFinite(Number(input.maxTokens))
-      ? Math.max(1, Math.floor(Number(input.maxTokens)))
+      ? Math.max(0, Math.floor(Number(input.maxTokens)))
       : this.config.maxTokens;
     if (maxTokens > 0) {
       body.max_tokens = maxTokens;
@@ -284,31 +347,52 @@ class OpenAICompatibleProvider extends BaseModelProvider {
       : this.config.timeout;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let lastError = null;
 
-    try {
-      const response = await this.fetchImpl(url, {
-        method: 'POST',
-        headers: this._buildHeaders(),
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-
-      const text = await response.text();
-      let payload = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        payload = text ? JSON.parse(text) : null;
-      } catch {
-        payload = null;
-      }
+        const response = await this.fetchImpl(url, {
+          method: 'POST',
+          headers: this._buildHeaders(),
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
 
-      if (!response.ok) {
+        const text = await response.text();
+        let payload = null;
+        try {
+          payload = text ? JSON.parse(text) : null;
+        } catch {
+          payload = null;
+        }
+
+        if (!response.ok) {
+          return {
+            ok: false,
+            provider: this.label,
+            text: '',
+            jsonText: '',
+            plainText: '',
+            json: payload,
+            raw: {
+              url,
+              request: body,
+              status: response.status,
+              statusText: response.statusText,
+              text
+            },
+            error: `HTTP ${response.status}: ${stringifyErrorPayload(payload) || response.statusText || text || 'request failed'}`
+          };
+        }
+
+        const replyText = extractTextFromResponse(payload || {});
         return {
-          ok: false,
+          ok: true,
           provider: this.label,
-          text: '',
-          jsonText: '',
-          plainText: '',
+          text: replyText,
+          jsonText: input.json === true ? replyText : '',
+          plainText: input.json === true ? '' : replyText,
           json: payload,
           raw: {
             url,
@@ -317,45 +401,38 @@ class OpenAICompatibleProvider extends BaseModelProvider {
             statusText: response.statusText,
             text
           },
-          error: `HTTP ${response.status}: ${stringifyErrorPayload(payload) || response.statusText || text || 'request failed'}`
+          error: ''
         };
+      } catch (error) {
+        lastError = error;
+        if (attempt >= 1 || !isRetryableFetchError(error)) {
+          break;
+        }
+      } finally {
+        clearTimeout(timer);
       }
-
-      const replyText = extractTextFromResponse(payload || {});
-      return {
-        ok: true,
-        provider: this.label,
-        text: replyText,
-        jsonText: input.json === true ? replyText : '',
-        plainText: input.json === true ? '' : replyText,
-        json: payload,
-        raw: {
-          url,
-          request: body,
-          status: response.status,
-          statusText: response.statusText,
-          text
-        },
-        error: ''
-      };
-    } catch (error) {
-      const aborted = error?.name === 'AbortError';
-      return {
-        ok: false,
-        provider: this.label,
-        text: '',
-        jsonText: '',
-        plainText: '',
-        json: null,
-        raw: {
-          url,
-          request: body
-        },
-        error: aborted ? `request timeout after ${timeoutMs}ms` : (error.message || 'request failed')
-      };
-    } finally {
-      clearTimeout(timer);
     }
+
+    return {
+      ok: false,
+      provider: this.label,
+      text: '',
+      jsonText: '',
+      plainText: '',
+      json: null,
+      raw: {
+        url,
+        request: body,
+        cause: lastError?.cause
+          ? {
+              code: lastError.cause.code || '',
+              hostname: lastError.cause.hostname || '',
+              message: lastError.cause.message || ''
+            }
+          : null
+      },
+      error: formatFetchError(lastError, timeoutMs)
+    };
   }
 }
 

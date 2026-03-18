@@ -12,6 +12,11 @@ module.exports = {
       timeout: config.openclaw?.timeout || 30000,
       local: config.openclaw?.local !== false,
       stateless: config.openclaw?.stateless !== false,
+      thinking: config.openclaw?.thinking || '',
+      isolatedStatePerRequest: config.openclaw?.isolatedStatePerRequest === true,
+      cleanupStateDirAfterRequest: config.openclaw?.cleanupStateDirAfterRequest !== false,
+      stateDirBase: config.openclaw?.stateDirBase,
+      configPath: config.openclaw?.configPath,
       logger: logger || console
     });
 

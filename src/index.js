@@ -172,6 +172,7 @@ function resolveModelProvider(finalConfig, context = {}) {
       model: namedProviderConfig.model,
       endpointPath: namedProviderConfig.endpointPath,
       headers: namedProviderConfig.headers,
+      extraBody: namedProviderConfig.extraBody,
       timeout: namedProviderConfig.timeout,
       maxTokens: namedProviderConfig.maxTokens
     });
@@ -183,6 +184,11 @@ function resolveModelProvider(finalConfig, context = {}) {
       timeout: finalConfig.openclaw?.timeout || 30000,
       local: finalConfig.openclaw?.local !== false,
       stateless: finalConfig.openclaw?.stateless !== false,
+      thinking: finalConfig.openclaw?.thinking || '',
+      isolatedStatePerRequest: finalConfig.openclaw?.isolatedStatePerRequest === true,
+      cleanupStateDirAfterRequest: finalConfig.openclaw?.cleanupStateDirAfterRequest !== false,
+      stateDirBase: finalConfig.openclaw?.stateDirBase,
+      configPath: finalConfig.openclaw?.configPath,
       logger: context.logger || console
     });
   }

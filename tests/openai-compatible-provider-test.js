@@ -13,6 +13,9 @@ async function testChatCompletionRequestShape() {
     baseUrl: 'https://api.example.com/v1/',
     apiKey: 'test-key',
     model: 'gpt-test',
+    extraBody: {
+      enable_thinking: false
+    },
     fetchImpl: async (url, options) => {
       seenUrl = url;
       seenOptions = options;
@@ -49,6 +52,7 @@ async function testChatCompletionRequestShape() {
   assert.equal(body.model, 'gpt-test', 'provider should send configured model');
   assert.deepEqual(body.response_format, { type: 'json_object' }, 'provider should request JSON object when json=true');
   assert.equal(body.max_tokens, 256, 'provider should pass max_tokens when provided');
+  assert.equal(body.enable_thinking, false, 'provider should merge configured extra body fields');
   assert.equal(Array.isArray(body.messages), true, 'provider should send messages array');
   assert.equal(body.messages[0].role, 'system', 'provider should include system prompt');
   assert.equal(body.messages[1].role, 'user', 'provider should include user prompt');
