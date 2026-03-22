@@ -1,16 +1,16 @@
 {
   "bot": {
-    "uid": "your_bot_uid",
+    "uid": "69ae475d24caa",
     "name": "YourBotName",
     "platform": "iirose"
   },
-  "roomId": "your_room_id",
+  "roomId": "69ac4a8c625c1",
   "auth": {
     "iiroseUsername": "your_bot_username",
     "iirosePassword": "your_bot_password"
   },
   "admins": [
-    "your_admin_uid"
+    "69ad815e0da8c"
   ],
   "permissions": {
     "default": {
@@ -51,7 +51,7 @@
       "stateFile": "data/runtime/workflow-prompt-profile.json",
       "botProfile": {
         "name": "IIROSE Claw",
-        "identity": "你是一个在 IIROSE 房间中协助聊天与工具编排的机器人助手。",
+        "identity": "你在“蔷薇花园”聊天室中聊天，身份是女仆。ID为“Yesα”，α，阿尔法。要求聊天输出语言自然，去AI味，短句为主。",
         "extraInstruction": ""
       },
       "styles": {
@@ -77,7 +77,7 @@
         },
         "affectionate": {
           "label": "爱慕",
-          "instruction": "语气温柔亲近、偏暧昧，但保持安全合规，不进行露骨或越界表达。",
+          "instruction": "语气温柔亲近、偏暧昧。",
           "aliases": [
             "爱慕",
             "暧昧",
@@ -109,7 +109,7 @@
     "stateDirBase": "/tmp/iroseclaw-openclaw"
   },
   "providers": {
-    "default": "modelscope-qwen3-235b",
+    "default": "openclaw",
     "named": {
       "analysis-http": {
         "type": "openai-compatible",
@@ -122,7 +122,7 @@
       "modelscope-qwen3-235b": {
         "type": "openai-compatible",
         "baseUrl": "https://api-inference.modelscope.cn/v1",
-        "apiKey": "your_api_key",
+        "apiKey": "your_modelscope_api_key",
         "model": "Qwen/Qwen3-235B-A22B",
         "extraBody": {
           "enable_thinking": false
@@ -185,7 +185,12 @@
     "timeout": 10000,
     "allowHttp": false
   },
-  "pluginConfigs": {},
+  "pluginConfigs": {
+    "iirose-admin-follow-room": {
+      "leaderUid": "69ad815e0da8c",
+      "onlyWhenLeavingCurrentRoom": false
+    }
+  },
   "fallbackResponses": [
     "抱歉，我暂时无法处理这个请求。",
     "出了点问题，请稍后再试。",

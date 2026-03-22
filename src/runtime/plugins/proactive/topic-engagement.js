@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createToolResult } = require('../../../contracts/tool');
+const { invokeWorkflowChat } = require('../../message/handler');
 const { isAdminUser } = require('../../policy/access');
 const { TriggerRouter, extractSessionTimestamp } = require('../../trigger/router');
 
@@ -28,12 +29,9 @@ const DEFAULT_CONFIG = {
   minBotSilenceMs: 45000,
   cooldownMs: 3 * 60 * 1000,
   maxPromptMessages: 10,
-  providerTimeoutMs: 10000,
-  provider: null,
   includeRooms: [],
   excludeRooms: [],
-  shouldIntervene: null,
-  composeIntervention: null
+  shouldIntervene: null
 };
 
 const QUESTION_PATTERNS = [/\?/u, /？/u, /吗$/u, /咋/u, /怎么/u, /为什么/u, /谁/u];
@@ -176,42 +174,6 @@ function detectReason(messages = []) {
   return 'generic';
 }
 
-function formatPromptMessages(messages = [], maxMessages = 10) {
-  return messages
-    .slice(-maxMessages)
-    .map((message) => {
-      const username = normalizeText(message.username || '用户', 40);
-      const content = sanitizeMessageContent(message.content || '');
-      return content ? `${username}: ${content}` : '';
-    })
-    .filter(Boolean)
-    .join('\n');
-}
-
-function sanitizeGeneratedReply(value = '') {
-  return String(value || '')
-    .replace(/```[\s\S]*?```/gu, ' ')
-    .replace(/\[\[EMO:[^\]]+\]\]/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .slice(0, 60);
-}
-
-function createFallbackReply(snapshot = {}) {
-  const reason = snapshot.reason || 'generic';
-
-  if (reason === 'music') {
-    return '这波像在拼歌单，下一首想接什么？';
-  }
-  if (reason === 'tension') {
-    return '先别上头，谁来补一句版本答案？';
-  }
-  if (reason === 'question') {
-    return '这段展开有点快，谁来一句话总结？';
-  }
-  return '你们这段聊得挺快，谁来补一句前情提要？';
-}
-
 function mergeSettings(defaults, persisted, overrides = {}) {
   return {
     enabled: overrides.enabled === true || overrides.enabled === false
@@ -257,75 +219,6 @@ function createSettingsStore(pluginConfig = {}) {
       dataDir,
       settingsPath
     }
-  };
-}
-
-function resolveProviderFactory(host, context, pluginConfig = {}) {
-  let cachedProvider;
-  let resolved = false;
-
-  return function resolveProvider() {
-    if (resolved) return cachedProvider;
-    resolved = true;
-
-    if (pluginConfig.provider === false) {
-      cachedProvider = null;
-      return cachedProvider;
-    }
-
-    if (pluginConfig.provider && typeof pluginConfig.provider.complete === 'function') {
-      cachedProvider = pluginConfig.provider;
-      return cachedProvider;
-    }
-
-    const config = context.config || {};
-    const logger = context.logger || host.logger || console;
-    const directProvider = config.workflow?.provider;
-    if (directProvider && typeof directProvider.complete === 'function') {
-      cachedProvider = directProvider;
-      return cachedProvider;
-    }
-
-    if (typeof config.workflow?.providerFactory === 'function') {
-      const provider = config.workflow.providerFactory({
-        config,
-        logger,
-        ctx: context.ctx || null,
-        host
-      });
-      if (provider && typeof provider.complete === 'function') {
-        cachedProvider = provider;
-        return cachedProvider;
-      }
-    }
-
-    const providerName = typeof pluginConfig.provider === 'string' && pluginConfig.provider.trim()
-      ? pluginConfig.provider.trim().toLowerCase()
-      : (typeof config.workflow?.provider === 'string' && config.workflow.provider.trim()
-        ? config.workflow.provider.trim().toLowerCase()
-        : (typeof config.providers?.default === 'string' && config.providers.default.trim()
-          ? config.providers.default.trim().toLowerCase()
-          : 'openclaw'));
-
-    const registeredProvider = host.getProvider?.(providerName);
-    if (!registeredProvider) {
-      cachedProvider = null;
-      return cachedProvider;
-    }
-
-    if (typeof registeredProvider === 'function') {
-      const provider = registeredProvider({
-        config,
-        logger,
-        ctx: context.ctx || null,
-        host
-      });
-      cachedProvider = provider && typeof provider.complete === 'function' ? provider : null;
-      return cachedProvider;
-    }
-
-    cachedProvider = typeof registeredProvider.complete === 'function' ? registeredProvider : null;
-    return cachedProvider;
   };
 }
 
@@ -386,52 +279,6 @@ function shouldInterveneWithBuiltins(snapshot = {}, config = {}) {
   return true;
 }
 
-async function composeInterventionText(snapshot = {}, options = {}) {
-  const customComposer = typeof options.composeIntervention === 'function'
-    ? options.composeIntervention
-    : null;
-  if (customComposer) {
-    const customText = await customComposer(snapshot, options);
-    const sanitizedCustom = sanitizeGeneratedReply(customText);
-    if (sanitizedCustom) {
-      return sanitizedCustom;
-    }
-  }
-
-  const provider = typeof options.resolveProvider === 'function'
-    ? options.resolveProvider()
-    : null;
-  if (provider && typeof provider.complete === 'function') {
-    const prompt = [
-      '你在一个热闹群聊里以机器人身份轻轻插一句话。',
-      '只生成一句自然中文，不超过28个汉字。',
-      '不要自我介绍，不要说“作为机器人”，不要解释规则，不要连续追问。',
-      '要像顺着话题轻轻接梗或帮忙收束，不要抢戏。',
-      `当前模式名：${snapshot.modeName || DEFAULT_SETTINGS.modeName}`,
-      `当前判断：${snapshot.reason || 'generic'}`,
-      '最近消息：',
-      formatPromptMessages(snapshot.messages, options.maxPromptMessages || DEFAULT_CONFIG.maxPromptMessages)
-    ].join('\n');
-
-    try {
-      const result = await provider.complete({
-        message: prompt,
-        timeoutMs: toPositiveInt(options.providerTimeoutMs, DEFAULT_CONFIG.providerTimeoutMs),
-        sessionId: `topic-engagement-${snapshot.roomId || 'room'}`,
-        json: false
-      });
-      const generated = sanitizeGeneratedReply(result?.text || result?.plainText || result?.jsonText || '');
-      if (generated) {
-        return generated;
-      }
-    } catch (error) {
-      options.logger?.warn?.(`[topic-engagement] provider compose failed: ${error.message}`);
-    }
-  }
-
-  return createFallbackReply(snapshot);
-}
-
 function createStatusText(status = {}, config = {}) {
   const updatedAt = Number.isFinite(Number(status.updatedAt)) && status.updatedAt > 0
     ? new Date(status.updatedAt).toLocaleString('zh-CN', { hour12: false })
@@ -451,6 +298,103 @@ function createStatusText(status = {}, config = {}) {
   ].join('\n');
 }
 
+function toPromptContextMessage(message = {}) {
+  const content = sanitizeMessageContent(message.content || '');
+  const rawContent = normalizeText(message.rawContent || message.content || '', 240);
+  if (!content && !rawContent) {
+    return null;
+  }
+
+  return {
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    userId: normalizeText(message.userId || '', 80) || 'unknown',
+    username: normalizeText(message.username || '', 80) || '未知用户',
+    content,
+    rawContent: rawContent || content,
+    isMentionBot: message.isMentionBot === true,
+    timestamp: normalizeEpochTimestamp(message.timestamp)
+  };
+}
+
+function buildProactiveConversationContext(snapshot = {}, maxMessages = DEFAULT_CONFIG.maxPromptMessages) {
+  const recentChannelMessages = snapshot.messages
+    .slice(-maxMessages)
+    .map(toPromptContextMessage)
+    .filter(Boolean);
+  const currentMessage = recentChannelMessages[recentChannelMessages.length - 1] || {
+    role: 'user',
+    userId: 'unknown',
+    username: '未知用户',
+    content: '',
+    rawContent: '',
+    isMentionBot: false,
+    timestamp: Date.now()
+  };
+
+  return {
+    triggerUser: {
+      id: currentMessage.userId,
+      name: currentMessage.username
+    },
+    currentMessage: {
+      userId: currentMessage.userId,
+      username: currentMessage.username,
+      content: currentMessage.content,
+      rawContent: currentMessage.rawContent,
+      timestamp: currentMessage.timestamp
+    },
+    recentMessages: [],
+    channelRecentMessages: recentChannelMessages,
+    historySummary: [],
+    anchorCount: 0
+  };
+}
+
+function buildProactiveTrigger(session, snapshot = {}) {
+  const currentMessage = toPromptContextMessage(snapshot.messages[snapshot.messages.length - 1] || {}) || {
+    role: 'user',
+    userId: normalizeText(session?.userId || '', 80) || 'unknown',
+    username: normalizeText(session?.username || '', 80) || '未知用户',
+    content: sanitizeMessageContent(session?.content || ''),
+    rawContent: normalizeText(session?.content || '', 240),
+    isMentionBot: false,
+    timestamp: normalizeEpochTimestamp(extractSessionTimestamp(session))
+  };
+  const channelId = normalizeText(snapshot.roomId || session?.channelId || session?.chatId || '', 160);
+
+  return {
+    kind: 'message.proactive',
+    isPrivateSession: false,
+    userId: currentMessage.userId,
+    username: currentMessage.username,
+    channelId,
+    messageId: normalizeText(session?.messageId || '', 80) || `proactive-${Date.now()}`,
+    timestamp: currentMessage.timestamp,
+    rawContent: currentMessage.rawContent || currentMessage.content,
+    cleanedContent: currentMessage.content,
+    content: currentMessage.content
+  };
+}
+
+function didChatEmitOutput(result = {}) {
+  if (!result || typeof result !== 'object') {
+    return false;
+  }
+
+  if (result.mode === 'direct-tool') {
+    return Array.isArray(result.outputResults) && result.outputResults.length > 0;
+  }
+
+  const workflowResult = result.workflowResult;
+  if (!workflowResult || typeof workflowResult !== 'object') {
+    return false;
+  }
+
+  return Boolean(workflowResult.outputResult)
+    || (Array.isArray(workflowResult.finalOutputResults) && workflowResult.finalOutputResults.length > 0)
+    || (Array.isArray(workflowResult.outputResults) && workflowResult.outputResults.length > 0);
+}
+
 function createTopicEngagementService(options = {}) {
   const config = {
     ...DEFAULT_CONFIG,
@@ -465,7 +409,6 @@ function createTopicEngagementService(options = {}) {
   config.minBotSilenceMs = toPositiveInt(config.minBotSilenceMs, DEFAULT_CONFIG.minBotSilenceMs);
   config.cooldownMs = toPositiveInt(config.cooldownMs, DEFAULT_CONFIG.cooldownMs);
   config.maxPromptMessages = toPositiveInt(config.maxPromptMessages, DEFAULT_CONFIG.maxPromptMessages);
-  config.providerTimeoutMs = toPositiveInt(config.providerTimeoutMs, DEFAULT_CONFIG.providerTimeoutMs);
   config.maxSpeakerRatio = Number.isFinite(Number(config.maxSpeakerRatio))
     ? Math.max(0.2, Math.min(1, Number(config.maxSpeakerRatio)))
     : DEFAULT_CONFIG.maxSpeakerRatio;
@@ -577,38 +520,48 @@ function createTopicEngagementService(options = {}) {
 
     roomState.inFlight = true;
     try {
-      const text = await composeInterventionText(snapshot, {
-        composeIntervention: config.composeIntervention,
-        resolveProvider: options.resolveProvider,
-        providerTimeoutMs: config.providerTimeoutMs,
-        maxPromptMessages: config.maxPromptMessages,
-        logger
-      });
-      if (!text) {
+      if (!context.workflowRuntime || !context.toolRegistry || !context.outputRuntime) {
         return false;
       }
 
-      const outputRuntime = context.outputRuntime;
-      if (!outputRuntime || typeof outputRuntime.execute !== 'function') {
-        return false;
-      }
-
-      await outputRuntime.execute({
-        kind: 'reply.current',
-        content: {
-          text,
-          useMemePipeline: false
-        }
-      }, {
+      const proactiveTrigger = buildProactiveTrigger(session, snapshot);
+      const proactiveTemplate = context.triggerTemplateRegistry?.get?.('message.proactive') || null;
+      const conversationContext = buildProactiveConversationContext(snapshot, config.maxPromptMessages);
+      const result = await invokeWorkflowChat({
+        trigger: proactiveTrigger,
         session,
         ctx: context.ctx,
-        userId: 'system:topic-engagement',
-        username: 'TopicEngagement',
+        botProfile: context.botProfile,
+        skillManager: context.skillManager,
+        toolRegistry: context.toolRegistry,
+        workflowRuntime: context.workflowRuntime,
+        outputRuntime: context.outputRuntime,
+        pickFallback: context.pickFallback,
+        contextService: context.contextService,
+        template: proactiveTemplate,
+        availableTools: context.triggerTemplateRegistry?.resolveTools?.(context.toolRegistry, 'message.proactive')
+          || context.toolRegistry.list({ workflowVisibleOnly: true }),
+        conversationContext,
         sendOptions: {
-          conversationStore: context.contextService,
-          botProfile: context.botProfile
+          recordConversation: false
+        },
+        runtimeConfig: context.runtimeConfig || context.config || {},
+        resultMode: 'workflow-proactive',
+        triggerPayload: {
+          proactive: true,
+          modeName: snapshot.modeName || DEFAULT_SETTINGS.modeName,
+          reason: snapshot.reason || 'generic',
+          roomId,
+          messageCount: snapshot.messageCount,
+          participantCount: snapshot.participantCount,
+          averageGapMs: snapshot.averageGapMs,
+          topSpeakerRatio: snapshot.topSpeakerRatio
         }
       });
+
+      if (!didChatEmitOutput(result)) {
+        return false;
+      }
 
       roomState.lastInterventionAt = now;
       return true;
@@ -747,7 +700,6 @@ module.exports = {
       ...DEFAULT_CONFIG,
       ...scopedConfig
     });
-    const resolveProvider = resolveProviderFactory(host, context, scopedConfig);
     const router = new TriggerRouter({
       botProfile: context.config?.bot || {},
       adminUids: Array.isArray(context.config?.admins) ? context.config.admins : []
@@ -760,7 +712,6 @@ module.exports = {
         defaultModeName: scopedConfig.defaultModeName || settingsStore.get().modeName
       },
       settingsStore,
-      resolveProvider,
       logger: context.logger || host.logger || console
     });
 
@@ -769,10 +720,17 @@ module.exports = {
     const cleanup = context.ctx?.on?.('message', (session) => {
       service.scheduleMessageEvaluation(session, {
         ctx: context.ctx,
+        config: context.config,
         contextService: context.contextService,
         outputRuntime: context.outputRuntime,
         botProfile: context.config?.bot || {},
-        router
+        pickFallback: context.pickFallback,
+        router,
+        skillManager: context.skillManager,
+        toolRegistry: context.toolRegistry,
+        workflowRuntime: context.workflowRuntime,
+        triggerTemplateRegistry: context.triggerTemplateRegistry,
+        runtimeConfig: context.config
       });
     });
     if (typeof cleanup === 'function') {
@@ -845,6 +803,15 @@ module.exports = {
               'proactive.topic.rename'
             ],
             instruction: '管理员私聊时，可开启、关闭、查看或命名主动话题介入模式。'
+          }
+        },
+        {
+          kind: 'message.proactive',
+          template: {
+            allowDirectToolMatch: false,
+            sendFallbackOnError: false,
+            useConversationContext: false,
+            instruction: '这是一次主动话题介入触发，不是用户 @。请结合当前频道最近消息，自然、简短、低打断地接一句；不要自我介绍，不要解释规则，不要抢戏。'
           }
         }
       ],

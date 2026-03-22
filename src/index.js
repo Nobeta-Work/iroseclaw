@@ -31,10 +31,12 @@ const legacyOpenClawCompatPlugin = require('./runtime/plugins/builtins/legacy-op
 const helpPlugin = require('./runtime/plugins/builtins/help');
 const musicPlugin = require('./runtime/plugins/builtins/music');
 const tictactoePlugin = require('./runtime/plugins/games/tictactoe');
+const gomokuPlugin = require('./runtime/plugins/games/gomoku');
 const numberGuessPlugin = require('./runtime/plugins/games/number-guess');
 const iiroseSystemPlugin = require('./runtime/plugins/iirose/system');
 const iiroseUserProfilePlugin = require('./runtime/plugins/iirose/user-profile');
 const iiroseRoomPlugin = require('./runtime/plugins/iirose/room');
+const iiroseAdminFollowRoomPlugin = require('./runtime/plugins/iirose/admin-follow-room');
 const iiroseInteractionProbePlugin = require('./runtime/plugins/iirose/interaction-probe');
 const proactiveTopicEngagementPlugin = require('./runtime/plugins/proactive/topic-engagement');
 const remoteRoomMonitoringPlugin = require('./runtime/plugins/monitoring/remote-room-monitoring');
@@ -345,8 +347,8 @@ function apply(ctx, config = {}) {
       const targetSession = executionContext.session;
       const senderContext = executionContext.ctx || ctx;
       const mergedSendOptions = {
-        ...(executionContext.sendOptions || {}),
-        ...(operation.options || {})
+        ...(operation.options || {}),
+        ...(executionContext.sendOptions || {})
       };
 
       if (!targetSession && operation.kind !== 'message.route') {
@@ -464,10 +466,12 @@ function apply(ctx, config = {}) {
   pluginHost.registerPlugin(helpPlugin);
   pluginHost.registerPlugin(musicPlugin);
   pluginHost.registerPlugin(tictactoePlugin);
+  pluginHost.registerPlugin(gomokuPlugin);
   pluginHost.registerPlugin(numberGuessPlugin);
   pluginHost.registerPlugin(iiroseSystemPlugin);
   pluginHost.registerPlugin(iiroseUserProfilePlugin);
   pluginHost.registerPlugin(iiroseRoomPlugin);
+  pluginHost.registerPlugin(iiroseAdminFollowRoomPlugin);
   pluginHost.registerPlugin(iiroseInteractionProbePlugin);
   pluginHost.registerPlugin(proactiveTopicEngagementPlugin);
   pluginHost.registerPlugin(remoteRoomMonitoringPlugin);

@@ -5,6 +5,10 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "koishi start",
+    "start:bg": "bash scripts/start-bg.sh",
+    "stop:bg": "bash scripts/stop-bg.sh",
+    "restart:bg": "bash scripts/restart-bg.sh",
+    "status:bg": "bash scripts/status-bg.sh",
     "test": "node tests/run.js",
     "lint": "eslint src/",
     "config:extract": "node scripts/config-extract.js",

@@ -1,5 +1,5 @@
 app:
-  nickname: YourBotName
+  nickname: ${IROSE_BOT_NAME:-Yesα}
   prefix:
     - .
   autoAuthorize: true
@@ -8,10 +8,10 @@ plugins:
   http:ob27mi: {}
   ./src/index:iroseclaw: {}
   koishi-plugin-adapter-iirose:iirose:
-    roomId: your_room_id
-    usename: your_bot_username
-    uid: your_bot_uid
-    password: your_bot_password
+    roomId: ${IROSE_ROOM_ID:-69ac4a8c625c1}
+    usename: ${IROSE_BOT_USERNAME:-Yesα}
+    uid: ${IROSE_BOT_UID:-69ae475d24caa}
+    password: ${IROSE_BOT_PASSWORD:-qw153246789}
     autoReconnect: true
     reconnectInterval: 5000
     botStatus: 'n'

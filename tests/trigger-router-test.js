@@ -26,6 +26,28 @@ async function main() {
   assert.equal(mentioned.cleanedContent, '你好', 'mentioned content should be cleaned');
   assert.equal(mentioned.kind, 'message.mentioned', 'room mention should be normalized as message.mentioned');
 
+  const nativeUidMention = router.routeMessage({
+    content: '[@bot_uid@] 原生UID提及',
+    userId: 'u1',
+    username: 'Tester',
+    channelId: 'room-1',
+    messageId: 'm1b'
+  });
+
+  assert.equal(nativeUidMention.shouldHandle, true, 'native uid mention should be handled');
+  assert.equal(nativeUidMention.cleanedContent, '原生UID提及', 'native uid mention should be cleaned');
+
+  const nativeNameMention = router.routeMessage({
+    content: '[*TestBot*] 原生名字提及',
+    userId: 'u1',
+    username: 'Tester',
+    channelId: 'room-1',
+    messageId: 'm1c'
+  });
+
+  assert.equal(nativeNameMention.shouldHandle, true, 'native name mention should be handled');
+  assert.equal(nativeNameMention.cleanedContent, '原生名字提及', 'native name mention should be cleaned');
+
   const privateNonAdmin = router.routeMessage({
     content: '你好',
     userId: 'u2',

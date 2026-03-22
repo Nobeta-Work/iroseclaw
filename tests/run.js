@@ -43,6 +43,7 @@ const testFiles = [
   'iirose-native-tool-groups-test.js',
   'interaction-probe-plugin-test.js',
   'tictactoe-plugin-test.js',
+  'gomoku-plugin-test.js',
   'number-guess-plugin-test.js',
   'admin-workflow-prompt-test.js',
   'room-move-command-test.js',

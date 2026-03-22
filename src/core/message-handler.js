@@ -8,19 +8,16 @@ const protocol = require('./protocol');
 const audit = require('./audit');
 const { createFallbackPicker } = require('../utils/fallback');
 const {
+  isBotMentioned: detectBotMention,
+  cleanBotMentionContent
+} = require('../utils/bot-mention');
+const {
   getSourceSession,
   getSessionUserId,
   getSessionUsername,
   getSessionChannelId,
   getSessionMessageId
 } = require('../utils/session-metadata');
-
-function escapeRegExp(text) {
-  if (typeof text !== 'string' || !text) {
-    return '';
-  }
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * 创建消息处理器
@@ -81,49 +78,7 @@ function createMessageHandler(config, openclawAdapter, skillManager, options = {
    * @returns {boolean} 是否被@
    */
   function isBotMentioned(session, content) {
-    // 优先级 0: 上游已确认被@
-    if (session?.isBotMentioned === true) {
-      return true;
-    }
-
-    // 优先级 1: session.parsed?.appel
-    if (session.parsed?.appel) {
-      return true;
-    }
-
-    // 优先级 2: 检查 content 中的 at 标签匹配 bot UID（IIROSE 新旧格式）
-    if (botUid && typeof content === 'string') {
-      const escapedUid = escapeRegExp(botUid);
-      const atTagPatterns = [
-        new RegExp(`\\[at:${escapedUid}\\]`, 'i'),
-        new RegExp(`<at\\b[^>]*\\bid=["']?${escapedUid}["']?[^>]*\\/?>`, 'i'),
-        new RegExp(`<at\\b[^>]*\\bid=["']?${escapedUid}["']?[^>]*>.*?<\\/at>`, 'i')
-      ];
-
-      for (const pattern of atTagPatterns) {
-        if (pattern.test(content)) {
-          return true;
-        }
-      }
-    }
-
-    // 优先级 3: 检查 @botName
-    if (botName) {
-      const escapedName = escapeRegExp(botName);
-      const patterns = [
-        new RegExp(`@${escapedName}\\s*`, 'i'),
-        new RegExp(`@${escapedName}$`, 'i'),
-        new RegExp(`^${escapedName}[\\s,，:：]`, 'i')
-      ];
-      
-      for (const pattern of patterns) {
-        if (pattern.test(content)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
+    return detectBotMention(session, content, { uid: botUid, name: botName });
   }
 
   /**
@@ -132,26 +87,7 @@ function createMessageHandler(config, openclawAdapter, skillManager, options = {
    * @returns {string} 清理后的消息
    */
   function cleanMessage(content) {
-    let cleaned = typeof content === 'string' ? content : '';
-
-    // 移除 IIROSE <at .../> 与 <at ...>...</at>
-    cleaned = cleaned.replace(/<at\b[^>]*\/>/gi, '');
-    cleaned = cleaned.replace(/<at\b[^>]*>.*?<\/at>/gi, '');
-
-    // 移除 [at:xxx] 标签（UID 可能包含字母）
-    cleaned = cleaned.replace(/\[at:[^\]]+\]/gi, '');
-
-    // 移除 @名字
-    if (botName) {
-      const escapedName = escapeRegExp(botName);
-      cleaned = cleaned.replace(new RegExp(`@${escapedName}\\s*`, 'gi'), '');
-    }
-
-    // 移除其他@提及
-    cleaned = cleaned.replace(/@\w+\s*/g, '');
-
-    // 清理多余空白
-    return cleaned.trim();
+    return cleanBotMentionContent(content, { uid: botUid, name: botName });
   }
 
   /**

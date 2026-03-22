@@ -55,8 +55,7 @@ async function testAdminControls() {
       },
       pluginConfigs: {
         'proactive-topic-engagement': {
-          dataDir: tempDir,
-          provider: false
+          dataDir: tempDir
         }
       },
       messageMemory: {
@@ -146,6 +145,24 @@ async function testAdminControls() {
 async function testHighFrequencyIntervention() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'topic-engagement-room-'));
   const ctx = createTestContext();
+  const capturedPrompts = [];
+  const provider = {
+    label: 'mock-provider',
+    async complete(input = {}) {
+      capturedPrompts.push(input.message || input.userPrompt || '');
+      return {
+        ok: true,
+        provider: 'mock-provider',
+        text: JSON.stringify({
+          status: 'final',
+          finalOutput: {
+            mode: 'reply',
+            text: '轻轻接一句'
+          }
+        })
+      };
+    }
+  };
 
   try {
     const app = index.apply(ctx, {
@@ -157,10 +174,12 @@ async function testHighFrequencyIntervention() {
       runtime: {
         mode: 'workflow'
       },
+      workflow: {
+        provider
+      },
       pluginConfigs: {
         'proactive-topic-engagement': {
           dataDir: tempDir,
-          provider: false,
           defaultEnabled: true,
           defaultModeName: '茶水间模式',
           windowMs: 60000,
@@ -213,7 +232,16 @@ async function testHighFrequencyIntervention() {
       1,
       `high-frequency room chat should trigger one proactive interjection: sent=${JSON.stringify(sent)} status=${JSON.stringify(service.getStatus())}`
     );
-    assert.equal(sent[0], '这波像在拼歌单，下一首想接什么？', 'fallback intervention should match music-topic response');
+    assert.equal(sent[0], '轻轻接一句', 'proactive plugin should reuse workflow chat output');
+    assert.equal(capturedPrompts.length, 1, 'proactive burst should invoke workflow provider once');
+    assert.equal(capturedPrompts[0].includes('当前 trigger: message.proactive'), true, 'workflow prompt should mark proactive trigger kind');
+    assert.equal(capturedPrompts[0].includes('trigger instruction: 这是一次主动话题介入触发'), true, 'workflow prompt should include proactive trigger instruction');
+    assert.equal(capturedPrompts[0].includes('当前频道最近消息(按时间升序):'), true, 'workflow prompt should include room window context');
+    assert.equal(capturedPrompts[0].includes('最近与 bot 相关消息'), false, 'proactive workflow should avoid mention-history context');
+    assert.equal(capturedPrompts[0].includes('茶水间模式'), true, 'workflow prompt should include proactive mode metadata');
+
+    const assistantMessages = app.contextService.getMessagesInWindow('room-1', 0, Date.now() + 1, { roles: ['assistant'] });
+    assert.equal(assistantMessages.length, 0, 'proactive workflow output should not be recorded into message memory');
 
     const moreRoomMessages = [
       { userId: 'u2', username: 'Bob', content: '这首也能接上' },
@@ -240,6 +268,7 @@ async function testHighFrequencyIntervention() {
     await service.awaitIdle();
 
     assert.equal(sent.length, 1, 'cooldown should prevent repeated proactive interjections in the same burst window');
+    assert.equal(capturedPrompts.length, 1, 'cooldown should also suppress repeated workflow invocations');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

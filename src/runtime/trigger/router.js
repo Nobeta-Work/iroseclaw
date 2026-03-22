@@ -5,15 +5,15 @@
 
 const { isSameUid } = require('../../utils/uid');
 const {
+  isBotMentioned,
+  cleanBotMentionContent
+} = require('../../utils/bot-mention');
+const {
   getSessionUserId,
   getSessionUsername,
   getSessionChannelId,
   getSessionMessageId
 } = require('../../utils/session-metadata');
-
-function escapeRegExp(text) {
-  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function extractSessionTimestamp(session) {
   const candidates = [
@@ -32,17 +32,8 @@ function extractSessionTimestamp(session) {
   return Date.now();
 }
 
-function cleanMentionContent(content, botName) {
-  let cleaned = typeof content === 'string' ? content : '';
-  cleaned = cleaned.replace(/<at[^>]*\/>/gi, '');
-  cleaned = cleaned.replace(/<at[^>]*>.*?<\/at>/gi, '');
-  cleaned = cleaned.replace(/\[at:[^\]]+\]/gi, '');
-  if (botName) {
-    const escapedName = escapeRegExp(botName);
-    cleaned = cleaned.replace(new RegExp(`@${escapedName}\\s*`, 'gi'), '');
-    cleaned = cleaned.replace(new RegExp(`^\\s*${escapedName}[\\s,，:：-]*`, 'i'), '');
-  }
-  return cleaned.trim();
+function cleanMentionContent(content, botProfile = {}) {
+  return cleanBotMentionContent(content, botProfile);
 }
 
 class TriggerRouter {
@@ -62,7 +53,7 @@ class TriggerRouter {
     const isAdminSender = this.adminUids.some(uid => isSameUid(uid, userId));
     const isMentioned = this._isMentioned(session, content, isPrivateSession, isAdminSender);
     const cleanedContent = isMentioned
-      ? cleanMentionContent(content, this.botProfile?.name || '')
+      ? cleanMentionContent(content, this.botProfile)
       : content.trim();
 
     if (isPrivateSession && !isAdminSender) {
@@ -133,20 +124,11 @@ class TriggerRouter {
   }
 
   _isMentioned(session, content, isPrivateSession, isAdminSender) {
-    const botUid = this.botProfile?.uid || '';
-    const botName = this.botProfile?.name || '';
-
     if (isPrivateSession && isAdminSender) {
       return true;
     }
 
-    if (session?.parsed?.appel) return true;
-    if (botUid && content.includes(`id="${botUid}"`)) return true;
-    if (botUid && content.includes(`<at id="${botUid}"`)) return true;
-    if (botName && new RegExp(`@${botName}`, 'i').test(content)) return true;
-    if (botName && content.trim().startsWith(botName)) return true;
-
-    return false;
+    return isBotMentioned(session, content, this.botProfile);
   }
 }
 

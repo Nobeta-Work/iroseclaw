@@ -49,6 +49,7 @@ const buildRequest = (session, message, permissionCtx, context = {}) => {
         timestamp: Date.now()
       },
       recentMessages: context?.recentMessages || permissionCtx?.recentMessages || [],
+      channelRecentMessages: context?.channelRecentMessages || [],
       historySummary: context?.historySummary || [],
       anchorCount: Number.isFinite(context?.anchorCount) ? context.anchorCount : 0
     }

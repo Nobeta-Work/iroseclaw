@@ -50,6 +50,26 @@ async function main() {
   assert.equal(adapterCalled, 1, 'adapter should be called exactly once');
   assert.equal(lastProtocolRequest?.message?.content, '你好', 'message content should be cleaned before adapter call');
 
+  const nativeUidReply = await handleMessage({
+    userId: 'u1b',
+    username: 'tester-native-uid',
+    content: '[@bot_uid_example@] 原生UID提及'
+  });
+
+  assert.equal(nativeUidReply, '来自openclaw', 'should return adapter reply for native [@uid@] mention');
+  assert.equal(adapterCalled, 2, 'adapter should be called for native uid mention');
+  assert.equal(lastProtocolRequest?.message?.content, '原生UID提及', 'native uid mention should be cleaned before adapter call');
+
+  const nativeNameReply = await handleMessage({
+    userId: 'u1c',
+    username: 'tester-native-name',
+    content: '[*BotExample*] 原生名字提及'
+  });
+
+  assert.equal(nativeNameReply, '来自openclaw', 'should return adapter reply for native [*name*] mention');
+  assert.equal(adapterCalled, 3, 'adapter should be called for native name mention');
+  assert.equal(lastProtocolRequest?.message?.content, '原生名字提及', 'native name mention should be cleaned before adapter call');
+
   const replyWithPreclean = await handleMessage({
     userId: 'u2',
     username: 'tester2',
@@ -59,7 +79,7 @@ async function main() {
   });
 
   assert.equal(replyWithPreclean, '来自openclaw', 'should accept pre-cleaned session payload');
-  assert.equal(adapterCalled, 2, 'adapter should be called for pre-cleaned payload');
+  assert.equal(adapterCalled, 4, 'adapter should be called for pre-cleaned payload');
 
   const replyNotMentioned = await handleMessage({
     userId: 'u3',
