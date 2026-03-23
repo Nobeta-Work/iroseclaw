@@ -20,30 +20,29 @@ cd /opt/projects/iroseclaw
 npm install
 ```
 
-### 2. 配置机器人（推荐：环境变量方式）
+### 2. 配置机器人（文件配置）
 
-复制环境变量模板：
+编辑主配置文件：
 ```bash
-cp .env.example .env
+nano config/app.json
+nano koishi.yml
 ```
 
-编辑 `.env` 文件，填入你的配置：
-```bash
-# 机器人基础配置
-IROSE_BOT_NAME=Yesα
-IROSE_BOT_UID=69ae475d24caa
-IROSE_BOT_USERNAME=your_username
-IROSE_BOT_PASSWORD=your_password
-IROSE_ROOM_ID=69ac4a8c625c1
+最少需要填这些字段：
 
-# 管理员 UID（逗号分隔）
-IROSE_ADMINS=69ad815e0da8c
+- `config/app.json`
+  - `bot.uid` / `bot.name`
+  - `roomId`
+  - `auth.iiroseUsername` / `auth.iirosePassword`
+  - `admins`
+  - `openclaw.agentLabel`
+- `koishi.yml`
+  - `plugins.koishi-plugin-adapter-iirose:iirose.roomId`
+  - `plugins.koishi-plugin-adapter-iirose:iirose.usename`
+  - `plugins.koishi-plugin-adapter-iirose:iirose.uid`
+  - `plugins.koishi-plugin-adapter-iirose:iirose.password`
 
-# AI Provider 配置
-IROSE_MODELSCOPE_API_KEY=ms-xxxxxxxxxxxxxxxxxxxx
-```
-
-> 💡 **最小侵入原则**：敏感信息通过环境变量注入，配置文件保持干净可提交。
+如果两处都写了房间号、账号或 UID，请保持一致。
 
 ### 3. 启动
 ```bash
@@ -82,19 +81,20 @@ npm run restart:bg
 2. `config/app.json`
 3. 环境变量（如 `IROSE_BOT_UID`、`IROSE_ADMINS`）
 
-### 环境变量列表
+### 可选环境变量覆盖
 
-| 变量名 | 说明 | 示例 |
-|--------|------|------|
-| `IROSE_BOT_NAME` | 机器人昵称 | `Yesα` |
-| `IROSE_BOT_UID` | 机器人 UID | `69ae475d24caa` |
-| `IROSE_BOT_USERNAME` | IIROSE 用户名 | `your_username` |
-| `IROSE_BOT_PASSWORD` | IIROSE 密码 | `your_password` |
-| `IROSE_ROOM_ID` | 房间 ID | `69ac4a8c625c1` |
-| `IROSE_ADMINS` | 管理员 UID（逗号分隔） | `69ad815e0da8c` |
-| `IROSE_MODELSCOPE_API_KEY` | ModelScope API Key | `ms-xxxxx` |
-| `IROSE_KIMI_API_KEY` | Kimi API Key（可选） | `xxxxx` |
-| `LOG_LEVEL` | 日志级别 | `DEBUG\|INFO\|WARN\|ERROR` |
+项目仍支持环境变量覆盖部分字段，但这不是主配置路径；主配置仍应以 `config/app.json` 和 `koishi.yml` 为准。
+
+常见覆盖项：
+
+- `IROSE_BOT_UID`
+- `IROSE_BOT_NAME`
+- `IROSE_ROOM_ID`
+- `IROSE_ADMINS`
+- `IROSE_IIROSE_USERNAME`
+- `IROSE_IIROSE_PASSWORD`
+- `IROSE_OPENCLAW_AGENT`
+- `IROSE_OPENCLAW_TIMEOUT`
 
 ## AI 人设与 OpenClaw 边界
 
@@ -110,6 +110,7 @@ npm run restart:bg
 - 字段：`openclaw.agentLabel`（兼容旧字段 `openclaw.subagentLabel`）
 - 环境变量覆盖：`IROSE_OPENCLAW_AGENT`（兼容 `IROSE_OPENCLAW_SUBAGENT`）
 - 用途：仅指定 transport agent，不承载人格。
+- 模型选择：项目代码不会向 OpenClaw CLI 传 `--model`；实际模型由 `~/.openclaw/agents/<agentLabel>/agent/config.json` 中的 `model` 决定。
 
 3. 会话策略
 - 字段：`openclaw.stateless` / `openclaw.useNativeSessionContext`
@@ -365,37 +366,21 @@ module.exports = {
 
 ## 提交前脱敏流程
 
-### 推荐方式：环境变量（最小侵入）
+### 推荐方式：config:extract 脚本
 
-使用环境变量注入敏感信息，配置文件保持干净可直接提交：
-
-```bash
-# 1. 复制模板
-cp .env.example .env
-
-# 2. 编辑 .env 填入你的配置
-nano .env
-
-# 3. 配置文件使用占位符（已默认）
-# config/app.json 和 koishi.yml 中的敏感字段已使用 ${VAR} 语法
-
-# 4. 直接提交
-git add -A && git commit -m "feat: xxx" && git push
-```
-
-### 备选方式：config:extract 脚本
-
-如需临时脱敏，可使用提取脚本：
+项目主配置是文件配置。提交前如需脱敏，直接使用提取脚本：
 
 ```bash
-# 提取敏感数据
+# 1. 提取敏感数据
 npm run config:extract
 
-# 提交...
+# 2. 提交...
 
-# 恢复配置
+# 3. 恢复本机配置
 npm run config:restore -- /tmp/iroseclaw-secrets-<timestamp>.json
 ```
+
+如不使用脚本，也可以手动编辑 `config/app.json` 和 `koishi.yml` 进行脱敏后再提交。
 
 ## 架构
 
@@ -411,33 +396,31 @@ IIROSE 消息 → @检测 (UID) → 权限判定 → Prompt Compiler(注入人�
 - `src/skills/` — 内置技能插件
 - `src/scripts/` — 用户自定义脚本（JS/Python，启动时加载）
 - `config/` — 配置文件
-- `cli/` — 命令行工具
-- `docs/` — 文档
 
 ## 多实例部署
 
 本项目支持同时运行多个机器人实例，每个实例独立配置：
 
 ```
-/opt/projects/iroseclaw        → Yesα 实例（主开发环境）
-/opt/products/iroseclaw        → Orγ 实例（生产环境）
-/opt/products/iroseclaw-Andδ   → Andδ 实例（新用户环境）
+/opt/projects/iroseclaw-main        → 主实例
+/opt/projects/iroseclaw-secondary   → 次实例
+/opt/projects/iroseclaw-third       → 第三实例
 ```
 
 ### 部署新实例步骤
 
 ```bash
 # 1. 克隆项目
-cd /opt/products
-git clone https://github.com/Nobeta-Work/iroseclaw.git iroseclaw-Andδ
-cd iroseclaw-Andδ
+cd /opt/projects
+git clone https://github.com/Nobeta-Work/iroseclaw.git iroseclaw-secondary
+cd iroseclaw-secondary
 
 # 2. 安装依赖
 npm install
 
-# 3. 配置环境变量
-cp .env.example .env
-nano .env  # 填入 Andδ 的配置
+# 3. 配置文件
+nano config/app.json
+nano koishi.yml
 
 # 4. 后台启动
 npm run start:bg
@@ -447,9 +430,9 @@ npm run start:bg
 
 | 实例 | 目录 | 机器人名 | 配置方式 |
 |------|------|----------|----------|
-| Yesα | `/opt/projects/iroseclaw` | Yesα | 环境变量 |
-| Orγ | `/opt/products/iroseclaw` | Orγ | 环境变量 |
-| Andδ | `/opt/products/iroseclaw-Andδ` | Andδ | 环境变量 |
+| 主实例 | `/opt/projects/iroseclaw-main` | 自定义 | 文件配置 |
+| 次实例 | `/opt/projects/iroseclaw-secondary` | 自定义 | 文件配置 |
+| 第三实例 | `/opt/projects/iroseclaw-third` | 自定义 | 文件配置 |
 
 ## 许可
 

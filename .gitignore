@@ -7,3 +7,11 @@ koishi.yml
 data/
 logs/
 dist/
+.openclaw/
+memory/
+AGENTS.md
+HEARTBEAT.md
+SOUL.md
+USER.md
+TOOLS.md
+IDENTITY.md

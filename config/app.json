@@ -1,16 +1,16 @@
 {
   "bot": {
-    "uid": "69ae475d24caa",
+    "uid": "your_bot_uid",
     "name": "YourBotName",
     "platform": "iirose"
   },
-  "roomId": "69ac4a8c625c1",
+  "roomId": "your_room_id",
   "auth": {
     "iiroseUsername": "your_bot_username",
     "iirosePassword": "your_bot_password"
   },
   "admins": [
-    "69ad815e0da8c"
+    "your_admin_uid"
   ],
   "permissions": {
     "default": {
@@ -51,7 +51,7 @@
       "stateFile": "data/runtime/workflow-prompt-profile.json",
       "botProfile": {
         "name": "IIROSE Claw",
-        "identity": "你在“蔷薇花园”聊天室中聊天，身份是女仆。ID为“Yesα”，α，阿尔法。要求聊天输出语言自然，去AI味，短句为主。",
+        "identity": "你在 IIROSE 聊天室中聊天。输出语言自然，去 AI 味，短句为主。",
         "extraInstruction": ""
       },
       "styles": {
@@ -187,7 +187,7 @@
   },
   "pluginConfigs": {
     "iirose-admin-follow-room": {
-      "leaderUid": "69ad815e0da8c",
+      "leaderUid": "your_admin_uid",
       "onlyWhenLeavingCurrentRoom": false
     }
   },
