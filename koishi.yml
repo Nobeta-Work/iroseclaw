@@ -1,0 +1,19 @@
+app:
+  nickname: YourBotName
+  prefix:
+    - .
+  autoAuthorize: true
+plugins:
+  proxy-agent: {}
+  http: {}
+  ./src/index:iroseclaw: {}
+  koishi-plugin-adapter-iirose:iirose:
+    roomId: your_room_id
+    usename: your_bot_username
+    uid: your_bot_uid
+    password: your_bot_password
+    autoReconnect: true
+    reconnectInterval: 5000
+    botStatus: 'n'
+    color: rgba(49, 31, 186, 1)
+    signature: I am a bot

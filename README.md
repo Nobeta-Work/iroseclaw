@@ -22,35 +22,11 @@ npm install
 
 ### 2. 配置机器人（文件配置）
 
-编辑主配置文件，并在项目根目录手动创建本地 `koishi.yml`：
+编辑仓库内自带的两个脱敏配置文件：
 
 ```bash
 nano config/app.json
 nano koishi.yml
-```
-
-最小 `koishi.yml` 示例：
-
-```yaml
-app:
-  nickname: YourBotName
-  prefix:
-    - .
-  autoAuthorize: true
-plugins:
-  proxy-agent: {}
-  http: {}
-  ./src/index:iroseclaw: {}
-  koishi-plugin-adapter-iirose:iirose:
-    roomId: your_room_id
-    usename: your_bot_username
-    uid: your_bot_uid
-    password: your_bot_password
-    autoReconnect: true
-    reconnectInterval: 5000
-    botStatus: 'n'
-    color: rgba(49, 31, 186, 1)
-    signature: I am a bot
 ```
 
 最少需要填这些字段：
@@ -62,6 +38,7 @@ plugins:
   - `admins`
   - `openclaw.agentLabel`
 - `koishi.yml`
+  - `app.nickname`
   - `plugins.koishi-plugin-adapter-iirose:iirose.roomId`
   - `plugins.koishi-plugin-adapter-iirose:iirose.usename`
   - `plugins.koishi-plugin-adapter-iirose:iirose.uid`
@@ -72,7 +49,8 @@ plugins:
 说明：
 
 - `config/app.json`：仓库内跟踪的主配置模板
-- `koishi.yml`：本地实例文件，默认不提交到 git，也不建议提交到远程仓库
+- `koishi.yml`：仓库内跟踪的 Koishi 脱敏模板
+- 本地运行前可直接编辑这两个文件；提交前请再次脱敏
 
 ### 3. 启动
 ```bash
@@ -113,7 +91,7 @@ npm run restart:bg
 
 ### 可选环境变量覆盖
 
-项目仍支持环境变量覆盖部分字段，但这不是主配置路径；主配置仍应以 `config/app.json` 和本地 `koishi.yml` 为准。
+项目仍支持环境变量覆盖部分字段，但这不是主配置路径；主配置仍应以 `config/app.json` 和 `koishi.yml` 为准。
 
 常见覆盖项：
 
@@ -398,7 +376,7 @@ module.exports = {
 
 ### 推荐方式：config:extract 脚本
 
-项目主配置是文件配置。仓库里保留 `config/app.json` 模板，本地真实 `koishi.yml` 不进入版本控制。提交前如需临时脱敏，直接使用提取脚本：
+项目主配置是文件配置。仓库里保留 `config/app.json` 与 `koishi.yml` 的脱敏模板。提交前如需临时脱敏，直接使用提取脚本：
 
 ```bash
 # 1. 提取敏感数据
@@ -410,7 +388,7 @@ npm run config:extract
 npm run config:restore -- /tmp/iroseclaw-secrets-<timestamp>.json
 ```
 
-如不使用脚本，也可以手动编辑 `config/app.json`，并确保本地 `koishi.yml` 不进入版本控制。
+如不使用脚本，也可以手动编辑 `config/app.json` 与 `koishi.yml` 中的敏感字段，再提交。
 
 ## 架构
 
@@ -448,13 +426,11 @@ cd iroseclaw-secondary
 # 2. 安装依赖
 npm install
 
-# 3. 创建并配置本地 koishi.yml
+# 3. 配置文件
+nano config/app.json
 nano koishi.yml
 
-# 4. 配置 config/app.json
-nano config/app.json
-
-# 5. 后台启动
+# 4. 后台启动
 npm run start:bg
 ```
 
