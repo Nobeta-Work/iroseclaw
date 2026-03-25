@@ -1,16 +1,16 @@
 {
   "bot": {
-    "uid": "your_bot_uid",
-    "name": "YourBotName",
+    "uid": "69ae475d24caa",
+    "name": "Yesα",
     "platform": "iirose"
   },
-  "roomId": "your_room_id",
+  "roomId": "69ac4a8c625c1",
   "auth": {
-    "iiroseUsername": "your_bot_username",
-    "iirosePassword": "your_bot_password"
+    "iiroseUsername": "Yesα",
+    "iirosePassword": "qw153246789"
   },
   "admins": [
-    "your_admin_uid"
+    "69ad815e0da8c"
   ],
   "permissions": {
     "default": {
