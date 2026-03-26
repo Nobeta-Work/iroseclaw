@@ -683,6 +683,33 @@ v0.1.0 不必复杂化，只需保存最近若干局即可。
 
 ---
 
+## 17.5 是否注册 tool package（收缩建议）
+
+结合当前项目框架，建议做如下收缩：
+
+### 必做
+- 插件 service
+- quick input 监听
+- 公屏输出
+- 状态持久化
+
+### 可做但非必须
+- 注册 tool package 作为 `@Bot 21点` 之类显式入口
+
+原因：
+- 当前已有游戏插件虽然也会注册 tool package
+- 但真正的“对局进行时交互”靠的都是 quick input
+- BJ 首版不应为了 tool package 设计而复杂化主流程
+
+因此本版本的主实现顺序应是：
+1. service
+2. quick input
+3. room reply
+4. best-effort private notify
+5. 最后再考虑是否补 tool package
+
+---
+
 ## 18. 关键函数清单（建议实现）
 
 ### 配置/存储
