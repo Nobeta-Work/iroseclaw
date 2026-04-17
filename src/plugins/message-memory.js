@@ -8,7 +8,7 @@ class MessageMemoryStore {
       enabled: config.enabled !== false,
       dataDir: path.resolve(config.dataDir || path.join(process.cwd(), 'data', 'message-memory')),
       maxEventsPerChannel: toPositiveInt(config.maxEventsPerChannel, 400),
-      recentMessageCount: toPositiveInt(config.recentMessageCount, 20),
+      recentMessageCount: toPositiveInt(config.recentMessageCount, 30),
       channelRecentMessageCount: toPositiveInt(config.channelRecentMessageCount, 12),
       anchorLookBehind: toPositiveInt(config.anchorLookBehind, 4),
       anchorLookAhead: toPositiveInt(config.anchorLookAhead, 4),
@@ -40,6 +40,9 @@ class MessageMemoryStore {
       content: normalizeContent(input.content, this.config.maxMessageChars),
       rawContent: normalizeContent(input.rawContent, this.config.maxMessageChars),
       isMentionBot: Boolean(input.isMentionBot),
+      sourceScope: normalizeSourceScope(input.sourceScope, input.channelId),
+      sourceChannelId: normalizeText(input.sourceChannelId || input.channelId || '', 160) || resolveStorageKey(input),
+      sourceTriggerKind: normalizeText(input.sourceTriggerKind || input.triggerKind || '', 80),
       timestamp: normalizeTimestamp(input.timestamp)
     });
   }
@@ -54,6 +57,9 @@ class MessageMemoryStore {
       content: normalizeContent(input.content, this.config.maxMessageChars),
       rawContent: normalizeContent(input.rawContent, this.config.maxMessageChars),
       isMentionBot: false,
+      sourceScope: normalizeSourceScope(input.sourceScope, input.channelId),
+      sourceChannelId: normalizeText(input.sourceChannelId || input.channelId || '', 160) || resolveStorageKey(input),
+      sourceTriggerKind: normalizeText(input.sourceTriggerKind || input.triggerKind || '', 80),
       timestamp: normalizeTimestamp(input.timestamp)
     });
   }
@@ -74,6 +80,9 @@ class MessageMemoryStore {
         username: triggerUsername,
         content: normalizeContent(input.currentContent, this.config.maxMessageChars),
         rawContent: normalizeContent(input.currentRawContent ?? input.currentContent, this.config.maxMessageChars),
+        sourceScope: normalizeSourceScope(input.sourceScope, input.channelId),
+        sourceChannelId: normalizeText(input.sourceChannelId || input.channelId || '', 160) || channelId,
+        sourceTriggerKind: normalizeText(input.sourceTriggerKind || input.triggerKind || '', 80),
         timestamp: normalizeTimestamp(input.timestamp)
       },
       recentMessages: [],
@@ -332,7 +341,10 @@ class MessageMemoryStore {
       content: event.content,
       rawContent: event.rawContent,
       timestamp: normalizeTimestamp(event.timestamp),
-      isMentionBot: event.isMentionBot
+      isMentionBot: event.isMentionBot,
+      sourceScope: normalizeSourceScope(event.sourceScope, event.channelId),
+      sourceChannelId: normalizeText(event.sourceChannelId || event.channelId || '', 160) || resolveStorageKey(event),
+      sourceTriggerKind: normalizeText(event.sourceTriggerKind || '', 80)
     };
   }
 
@@ -383,7 +395,9 @@ class MessageMemoryStore {
     const timestampLabel = formatTimestamp(anchorEvent.timestamp);
     const anchorText = truncateText(anchorEvent.content, this.config.maxSummaryChars);
     const replyText = botReply ? truncateText(botReply, this.config.maxSummaryChars) : '未记录到机器人回复';
-    return `${timestampLabel} ${anchorEvent.username}(uid=${anchorEvent.userId}) @bot: ${anchorText} | bot: ${replyText}`;
+    const sourceLabel = formatSourceLabel(anchorEvent);
+    const sourcePrefix = sourceLabel ? `${sourceLabel} ` : '';
+    return `${timestampLabel} ${sourcePrefix}${anchorEvent.username}(uid=${anchorEvent.userId}) @bot: ${anchorText} | bot: ${replyText}`;
   }
 
   _summarizeDroppedAnchors(events, earliestRetainedAnchor, droppedAnchorCount) {
@@ -404,12 +418,18 @@ function normalizeStoredEvent(event) {
 
   return {
     ...event,
-    timestamp: normalizeTimestamp(event.timestamp)
+    timestamp: normalizeTimestamp(event.timestamp),
+    sourceScope: normalizeSourceScope(event.sourceScope, event.channelId),
+    sourceChannelId: normalizeText(event.sourceChannelId || event.channelId || '', 160) || resolveStorageKey(event),
+    sourceTriggerKind: normalizeText(event.sourceTriggerKind || '', 80)
   };
 }
 
 function buildEventIdentityKey(event = {}) {
   return [
+    normalizeText(event.sourceScope, 80),
+    normalizeText(event.sourceChannelId || event.channelId, 160),
+    normalizeText(event.sourceTriggerKind, 80),
     normalizeText(event.userId, 80),
     normalizeText(event.username, 80),
     normalizeText(event.content, 180),
@@ -447,6 +467,17 @@ function normalizeContent(value, maxChars) {
   return truncateText(text.replace(/\s+/g, ' '), maxChars);
 }
 
+function normalizeSourceScope(value, channelId = '') {
+  const text = normalizeText(value, 32).toLowerCase();
+  if (text === 'public' || text === 'private') {
+    return text;
+  }
+  if (typeof channelId === 'string' && channelId.startsWith('private:')) {
+    return 'private';
+  }
+  return 'public';
+}
+
 function normalizeTimestamp(value) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) {
@@ -468,6 +499,25 @@ function truncateText(value, maxChars) {
   if (!text) return '';
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
+function formatSourceLabel(event = {}) {
+  const scope = normalizeSourceScope(event.sourceScope, event.channelId);
+  const scopeLabel = scope === 'private' ? '私聊' : '公屏';
+  const sourceChannelId = normalizeText(event.sourceChannelId || event.channelId || '', 160);
+  const triggerKind = normalizeText(event.sourceTriggerKind || '', 80);
+  const parts = [];
+  if (scopeLabel) {
+    parts.push(scopeLabel);
+  }
+  if (sourceChannelId) {
+    parts.push(sourceChannelId);
+  }
+  if (triggerKind) {
+    parts.push(triggerKind);
+  }
+
+  return parts.length > 0 ? `[${parts.join(' | ')}]` : '';
 }
 
 function mergeRanges(ranges) {

@@ -153,7 +153,7 @@ const DEFAULT_CONFIG = {
     enabled: true,
     dataDir: 'data/message-memory',
     maxEventsPerChannel: 400,
-    recentMessageCount: 20,
+    recentMessageCount: 30,
     maxAnchorRounds: 20,
     compactCheckInterval: 50,
     compactOnStartup: true,

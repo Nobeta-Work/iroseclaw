@@ -175,6 +175,9 @@ function buildExecutionContext(options = {}) {
     contextService
   } = options;
   const template = options.template || null;
+  const sourceScope = trigger.isPrivateSession === true ? 'private' : 'public';
+  const sourceChannelId = trigger.channelId || session.channelId || session.chatId || '';
+  const sourceTriggerKind = trigger.kind || '';
 
   return {
     session,
@@ -182,12 +185,21 @@ function buildExecutionContext(options = {}) {
     userId: trigger.userId,
     username: trigger.username,
     currentEventId: options.currentEventId || null,
+    trigger,
+    triggerKind: sourceTriggerKind,
+    sourceScope,
+    sourceChannelId,
+    sourceTriggerKind,
     triggerTemplate: template,
     contextService,
     conversationStore: contextService,
     sendOptions: {
       conversationStore: contextService,
       botProfile,
+      sourceScope,
+      sourceChannelId,
+      sourceTriggerKind,
+      triggerKind: sourceTriggerKind,
       ...(options.sendOptions && typeof options.sendOptions === 'object' ? options.sendOptions : {})
     }
   };

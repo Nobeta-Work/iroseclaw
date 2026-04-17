@@ -687,6 +687,17 @@ function apply(ctx, config = {}) {
       }
 
       const storedMessage = contextService.captureIncomingMessage(trigger);
+      if (storedMessage && typeof storedMessage === 'object' && storedMessage.globalSharedEventId) {
+        trigger.globalSharedEventId = storedMessage.globalSharedEventId;
+      }
+      const replySendOptions = {
+        conversationStore: contextService,
+        botProfile: bot,
+        sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+        sourceChannelId: channelId,
+        sourceTriggerKind: trigger.kind,
+        triggerKind: trigger.kind
+      };
 
       if (!isMentioned) return;
 
@@ -695,17 +706,13 @@ function apply(ctx, config = {}) {
       if (!cleaned) {
         if (runtimeMode === 'legacy') {
           await sendToRoom(session, ctx, '嗯？你想说什么呀~(◕‿◕✿)', {
-            conversationStore: contextService,
-            botProfile: bot
+            ...replySendOptions
           });
         } else {
           await sendReplyThroughRuntime(outputRuntime, {
             session,
             ctx,
-            sendOptions: {
-              conversationStore: contextService,
-              botProfile: bot
-            }
+            sendOptions: replySendOptions
           }, '嗯？你想说什么呀~(◕‿◕✿)');
         }
         return;
@@ -817,15 +824,13 @@ function apply(ctx, config = {}) {
           logger.INFO('SKILL', `技能返回: ${result?.substring?.(0, 50) || result}`);
           if (result !== null && result !== undefined && result !== '') {
             await sendToRoom(session, ctx, result, {
-              conversationStore: contextService,
-              botProfile: bot
+              ...replySendOptions
             });
           }
         } catch (err) {
           logger.ERROR('SKILL', `技能 ${skill.name} 执行失败:`, err.message);
           await sendToRoom(session, ctx, pickFallback(), {
-            conversationStore: contextService,
-            botProfile: bot
+            ...replySendOptions
           });
         }
         return;
@@ -856,8 +861,7 @@ function apply(ctx, config = {}) {
 
         if (plainReply && plainReply.trim().length > 0) {
           await sendToRoom(session, ctx, plainReply, {
-            conversationStore: contextService,
-            botProfile: bot
+            ...replySendOptions
           });
           let emotionForMeme = taggedEmotion || '';
           let tagMessage = buildImageEmotionTag(emotionForMeme);
@@ -871,23 +875,20 @@ function apply(ctx, config = {}) {
           if (shouldSendMeme) {
             logger.INFO('MEME', `触发表情包标记发送: ${emotionForMeme}`);
             await sendToRoom(session, ctx, tagMessage, {
-              conversationStore: contextService,
-              botProfile: bot,
+              ...replySendOptions,
               recordConversation: false
             });
           }
         } else {
           // OpenClaw 无回复时走统一兜底词条
           await sendToRoom(session, ctx, pickFallback(), {
-            conversationStore: contextService,
-            botProfile: bot
+            ...replySendOptions
           });
         }
       } catch (err) {
         logger.ERROR('CHAT', 'OpenClaw 聊天失败:', err.message);
         await sendToRoom(session, ctx, pickFallback(), {
-          conversationStore: contextService,
-          botProfile: bot
+          ...replySendOptions
         });
       }
 
@@ -956,12 +957,26 @@ function recordBotMessage(session, output, options = {}, result) {
   if (!conversationStore || !shouldRecordBotMessage(output, options)) return;
 
   const messageId = Array.isArray(result) && result.length > 0 ? String(result[0]) : '';
+  const sourceChannelId = typeof options.sourceChannelId === 'string' && options.sourceChannelId.trim()
+    ? options.sourceChannelId.trim()
+    : (session.channelId || session.guildId || '');
+  const sourceScope = typeof options.sourceScope === 'string' && options.sourceScope.trim()
+    ? options.sourceScope.trim()
+    : (String(sourceChannelId || '').startsWith('private:') ? 'private' : 'public');
+  const sourceTriggerKind = typeof options.sourceTriggerKind === 'string' && options.sourceTriggerKind.trim()
+    ? options.sourceTriggerKind.trim()
+    : (typeof options.triggerKind === 'string' && options.triggerKind.trim()
+      ? options.triggerKind.trim()
+      : '');
   conversationStore.addBotMessage({
     channelId: session.channelId || session.guildId || '',
     messageId,
     userId: options.botProfile?.uid || 'bot',
     username: options.botProfile?.name || 'Bot',
     content: output,
+    sourceScope,
+    sourceChannelId,
+    sourceTriggerKind,
     timestamp: Date.now()
   });
 }

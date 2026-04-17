@@ -24,6 +24,7 @@ const testFiles = [
   'direct-reply-agent-integration-test.js',
   'trigger-router-test.js',
   'context-service-test.js',
+  'context-service-global-context-test.js',
   'message-memory-retention-test.js',
   'tool-registry-match-test.js',
   'policy-engine-test.js',

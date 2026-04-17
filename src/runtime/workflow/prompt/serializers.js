@@ -6,7 +6,7 @@
 function formatContextMessage(item) {
   if (!item || typeof item !== 'object') return '';
   const role = item.role === 'assistant'
-    ? 'BOT'
+    ? `${item.username || 'BOT'}(uid=${item.userId || 'bot'})`
     : `${item.username || '未知用户'}(uid=${item.userId || 'unknown'})`;
   const mentionLabel = item.isMentionBot ? ' @bot' : '';
   const content = typeof item.content === 'string' ? item.content.trim() : '';
@@ -17,6 +17,46 @@ function formatContextMessage(item) {
     ? ` | raw=${rawContent}`
     : '';
   return `- ${role}${mentionLabel}: ${renderedContent}${rawSuffix}`;
+}
+
+function formatSourceInfo(item = {}) {
+  const sourceScope = String(item.sourceScope || '').trim().toLowerCase();
+  const scopeLabel = sourceScope === 'private'
+    ? '私聊'
+    : (sourceScope === 'public' ? '公屏' : '');
+  const sourceChannelId = typeof item.sourceChannelId === 'string' ? item.sourceChannelId.trim() : '';
+  const sourceTriggerKind = typeof item.sourceTriggerKind === 'string' ? item.sourceTriggerKind.trim() : '';
+  const parts = [];
+
+  if (scopeLabel) {
+    parts.push(`来源=${scopeLabel}`);
+  }
+  if (sourceChannelId) {
+    parts.push(`位置=${sourceChannelId}`);
+  }
+  if (sourceTriggerKind) {
+    parts.push(`触发=${sourceTriggerKind}`);
+  }
+
+  return parts.length > 0 ? `[${parts.join(' | ')}]` : '';
+}
+
+function formatSharedContextMessage(item) {
+  if (!item || typeof item !== 'object') return '';
+  const sourceInfo = formatSourceInfo(item);
+  const role = item.role === 'assistant'
+    ? `${item.username || 'BOT'}(uid=${item.userId || 'bot'})`
+    : `${item.username || '未知用户'}(uid=${item.userId || 'unknown'})`;
+  const mentionLabel = item.isMentionBot ? ' @bot' : '';
+  const content = typeof item.content === 'string' ? item.content.trim() : '';
+  const rawContent = typeof item.rawContent === 'string' ? item.rawContent.trim() : '';
+  const renderedContent = content || rawContent;
+  if (!renderedContent) return '';
+  const rawSuffix = rawContent && rawContent !== renderedContent
+    ? ` | raw=${rawContent}`
+    : '';
+  const sourcePrefix = sourceInfo ? `${sourceInfo} ` : '';
+  return `- ${sourcePrefix}${role}${mentionLabel}: ${renderedContent}${rawSuffix}`;
 }
 
 function buildPermissionPrompt(protocolRequest = {}) {
@@ -54,9 +94,18 @@ function buildStandardContextPrompt(protocolRequest = {}) {
   const channelRecentMessages = Array.isArray(protocolRequest?.context?.channelRecentMessages)
     ? protocolRequest.context.channelRecentMessages
     : [];
+  const globalSharedRecentMessages = Array.isArray(protocolRequest?.context?.globalSharedRecentMessages)
+    ? protocolRequest.context.globalSharedRecentMessages
+    : [];
+  const globalSharedHistorySummary = Array.isArray(protocolRequest?.context?.globalSharedHistorySummary)
+    ? protocolRequest.context.globalSharedHistorySummary
+    : [];
   const historySummary = Array.isArray(protocolRequest?.context?.historySummary)
     ? protocolRequest.context.historySummary
     : [];
+  const globalSharedAnchorCount = Number.isFinite(Number(protocolRequest?.context?.globalSharedAnchorCount))
+    ? Number(protocolRequest.context.globalSharedAnchorCount)
+    : 0;
 
   const blocks = [
     '你正在 IIROSE 群聊环境中回复消息。',
@@ -104,6 +153,27 @@ function buildStandardContextPrompt(protocolRequest = {}) {
     blocks.push(`当前需要回复的消息: ${(currentMessage.username || triggerUser.name || '未知用户')}(uid=${currentMessage.userId || triggerUser.id || 'unknown'}): ${currentContent}${rawSuffix}`);
   }
 
+  if (globalSharedHistorySummary.length > 0) {
+    blocks.push('全局共享历史摘要(跨房间/私聊，来源已标注):');
+    for (const item of globalSharedHistorySummary) {
+      if (typeof item === 'string' && item.trim()) {
+        blocks.push(`- ${item.trim()}`);
+      }
+    }
+  }
+
+  if (globalSharedRecentMessages.length > 0) {
+    blocks.push('全局共享上下文(跨房间/私聊，来源已标注，不等同于当前房间讨论):');
+    for (const item of globalSharedRecentMessages) {
+      const formatted = formatSharedContextMessage(item);
+      if (formatted) blocks.push(formatted);
+    }
+  }
+
+  if (globalSharedAnchorCount > 0) {
+    blocks.push(`全局共享已记录 @bot 锚点数: ${globalSharedAnchorCount}`);
+  }
+
   blocks.push('请基于上下文只回复当前需要回复的消息，避免混淆历史话题和用户身份。');
   return blocks.join('\n');
 }
@@ -111,6 +181,15 @@ function buildStandardContextPrompt(protocolRequest = {}) {
 function buildNativeContextPrompt(protocolRequest = {}) {
   const triggerUser = protocolRequest?.context?.triggerUser || {};
   const currentMessage = protocolRequest?.context?.currentMessage || {};
+  const globalSharedRecentMessages = Array.isArray(protocolRequest?.context?.globalSharedRecentMessages)
+    ? protocolRequest.context.globalSharedRecentMessages
+    : [];
+  const globalSharedHistorySummary = Array.isArray(protocolRequest?.context?.globalSharedHistorySummary)
+    ? protocolRequest.context.globalSharedHistorySummary
+    : [];
+  const globalSharedAnchorCount = Number.isFinite(Number(protocolRequest?.context?.globalSharedAnchorCount))
+    ? Number(protocolRequest.context.globalSharedAnchorCount)
+    : 0;
   const currentContent = typeof currentMessage.content === 'string'
     ? currentMessage.content.trim()
     : (typeof protocolRequest?.message?.content === 'string' ? protocolRequest.message.content.trim() : '');
@@ -126,6 +205,27 @@ function buildNativeContextPrompt(protocolRequest = {}) {
 
   if (currentContent) {
     blocks.push(`当前需要回复的消息: ${(currentMessage.username || triggerUser.name || '未知用户')}(uid=${currentMessage.userId || triggerUser.id || 'unknown'}): ${currentContent}`);
+  }
+
+  if (globalSharedHistorySummary.length > 0) {
+    blocks.push('补充的全局共享历史摘要(跨房间/私聊，来源已标注):');
+    for (const item of globalSharedHistorySummary) {
+      if (typeof item === 'string' && item.trim()) {
+        blocks.push(`- ${item.trim()}`);
+      }
+    }
+  }
+
+  if (globalSharedRecentMessages.length > 0) {
+    blocks.push('补充的全局共享上下文(与当前 session 记忆不同，来源已标注):');
+    for (const item of globalSharedRecentMessages) {
+      const formatted = formatSharedContextMessage(item);
+      if (formatted) blocks.push(formatted);
+    }
+  }
+
+  if (globalSharedAnchorCount > 0) {
+    blocks.push(`全局共享已记录 @bot 锚点数: ${globalSharedAnchorCount}`);
   }
 
   blocks.push('请只回复当前消息，保持自然、简短、直接。');
