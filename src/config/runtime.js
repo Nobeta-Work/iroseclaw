@@ -49,7 +49,7 @@ const DEFAULT_CONFIG = {
       blockedActions: ['admin', 'system', 'config']
     },
     admin: {
-      allowedActions: ['chat', 'help', 'music', 'admin', 'system', 'config'],
+      allowedActions: ['chat', 'help', 'music', 'admin', 'system', 'config', 'message.route'],
       blockedActions: []
     }
   },

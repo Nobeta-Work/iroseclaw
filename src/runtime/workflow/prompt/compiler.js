@@ -204,7 +204,13 @@ function compileWorkflowPrompt(workflowInput = {}, options = {}) {
     '{"status":"final","decisionSummary":"简短说明","toolCalls":[],"finalOutput":{"mode":"reply","text":"回复内容","renderMode":"plain","replySegments":[],"operations":[]},"audit":{"reason":"","blocked":false}}',
     '  - finalOutput.renderMode 仅可取 plain 或 markdown。普通聊天默认 plain；当回复需要代码块、标题、引用、结构化列表等 markdown 格式时使用 markdown。',
     '  - 当 renderMode=markdown 时，不要手写 IIROSE 的渲染前缀 \\\\\\*，运行时会自动注入。',
-    '  - 若需要编排多条输出，可在 finalOutput.operations 中给出 operation 数组（每个元素形如 {"kind":"reply.current","content":{"text":"...","renderMode":"markdown","useMemePipeline":false}}）。',
+    '  - 若需要编排多条输出，可在 finalOutput.operations 中给出 operation 数组（每个元素形如 {"kind":"reply.current","content":{"text":"...","renderMode":"markdown","useMemePipeline":false}}）。
+  - operation.kind 可选值:
+    * reply.current: 回复当前会话（默认值，普通聊天场景优先使用）
+    * message.route: 路由消息到其他房间或私聊频道，需额外指定 content.targetChannelId（管理员可用）
+    * communication.private.send: 向指定用户发送私聊消息，需在 toolCalls 中调用对应工具（管理员可用）
+  - 若无需发送任何消息，可设置 finalOutput.mode="none"，无需回复内容。
+  - 管理员场景下可根据需求灵活选择发送方式：例如用户在私聊要求发公屏通知时可使用 message.route，公屏用户要求单独回复隐私内容时可使用 communication.private.send。',
     '3) 阻止执行:',
     '{"status":"blocked","decisionSummary":"简短说明","toolCalls":[],"finalOutput":{"mode":"none","text":"","renderMode":"plain","replySegments":[],"operations":[]},"audit":{"reason":"阻止原因","blocked":true}}'
   );
