@@ -7,15 +7,15 @@
 本方案明确采用：
 
 - **参考现有井字棋 / 猜数字插件实现方式**
-- **作为本地游戏插件实现**
-- **直接监听聊天窗口消息**
-- **通过关键词驱动状态机**
-- **不走 workflow 通道**
-- **不依赖 LLM 决策**
+- **作为本地 runtime game plugin 实现**
+- **遵守现有 `PluginHost` 标准契约：service + quick input adapter + tool package**
+- **以确定性状态机驱动房间内主流程**
+- **主对局流程不依赖 workflow / LLM 决策**
+- **将规则内核、存储、通知、命令入口拆成可替换层**
 
 即：
 
-> BJ v0.1.0 是一个房间态、关键词驱动、强状态机、非 workflow 的游戏插件。
+> BJ v0.1.0 是一个房间态、强状态机、service-first、以 quick input 为主入口、但同时向宿主暴露标准 tool package 的游戏插件。
 
 ---
 
@@ -37,8 +37,21 @@ v0.1.0 默认同一房间同一时间只允许一局 21 点。
 - 公屏：流程推进、轮次播报、结算
 - 私聊：发玩家手牌、补牌结果、个人提示
 
-### 2.5 不改造为 workflow 工具
-本版本不注册 workflow tool package，不让 LLM 参与游戏流程。
+### 2.5 主流程不走 workflow，但不脱离宿主标准
+本版本的主对局流程不依赖 workflow 决策，不让 LLM 参与发牌、轮次、结算。
+
+但这不意味着 BJ 可以绕开宿主标准能力。相反，BJ 仍应：
+- 暴露标准 `games.blackjack` service
+- 注册标准 `games-blackjack-package`
+- 让 quick input、tool 调用、后续其他入口共享同一套 service 契约
+
+### 2.6 核心与适配层分离
+`ctx.on('message')`、IIROSE 私聊发送、文件持久化都属于适配层，不属于游戏内核。
+
+必须保证：
+- 规则计算层不直接依赖 Koishi `session`
+- 状态推进层不直接操作具体私聊 API
+- 入口层只做解析与转发，不能承载业务真规则
 
 ---
 
@@ -68,6 +81,14 @@ v0.1.0 默认同一房间同一时间只允许一局 21 点。
 - 私聊权限限制
 - 已有 runtime plugin 注册机制
 
+### 3.4 `src/runtime/plugins/host.js`
+需关注：
+- `registerService()`
+- `registerToolPackage()`
+- `registerCleanup()`
+- `getPluginConfig()`
+- 插件上下文对 `ctx` / `outputRuntime` / `policyEngine` / `triggerTemplateRegistry` 的暴露方式
+
 ---
 
 ## 4. 实现形态
@@ -92,16 +113,68 @@ v0.1.0 默认同一房间同一时间只允许一局 21 点。
 
 ## 4.3 插件导出形态
 
-建议保持与现有 built-in runtime plugin 一致：
+建议保持与现有 built-in runtime plugin 一致，并显式导出 service factory：
 
 ```js
 module.exports = {
   name: 'games-blackjack',
+  createBlackjackService,
   apply(host, context) {
     // 注册逻辑
   }
 }
 ```
+
+## 4.4 标准 apply() 契约
+
+BJ 的 `apply()` 应与现有 games 插件保持同型，而不是只注册一个匿名消息监听器：
+
+```js
+module.exports = {
+  name: 'games-blackjack',
+  createBlackjackService,
+  apply(host, context) {
+    const pluginConfig = context.getPluginConfig({});
+    const service = createBlackjackService({
+      ...pluginConfig,
+      logger: context.logger || host.logger || console
+    });
+
+    host.registerService('games.blackjack', service);
+
+    const cleanup = context.ctx?.on?.('message', async (session) => {
+      const result = service.handleQuickInput(session);
+      if (!result) return;
+      await sendReply(context, session, result.ok ? result.text : result.error);
+    });
+
+    if (typeof cleanup === 'function') {
+      context.registerCleanup(cleanup);
+    }
+
+    context.registerToolPackage({
+      name: 'games-blackjack-package',
+      version: '0.1.0',
+      tools: [
+        createStartTool(service),
+        createJoinTool(service),
+        createStatusTool(service),
+        createRulesTool(service),
+        createCancelTool(service)
+      ],
+      metadata: {
+        pluginName: 'games-blackjack',
+        description: '机器人主持的房间态 Blackjack / 21点'
+      }
+    });
+  }
+}
+```
+
+关键约束：
+- `quick input` 与 `tool package` 都只能调用同一个 service
+- 不允许 quick input 一套逻辑、tool 再维护另一套逻辑
+- `apply()` 负责组装，不负责承载规则细节
 
 ---
 
@@ -145,22 +218,42 @@ const DEFAULT_CONFIG = {
 - `requireMentionToStart: false`：允许房间内直接命令式触发
 - 短关键词如 `加入 / 开始 / 要 / 停 / 状态` 只应在活跃牌局房间内生效
 
+### 5.2 Service factory 注入依赖
+
+除了可序列化配置，`createBlackjackService(options)` 还应允许注入以下非配置型依赖：
+
+- `store`：状态存储实现
+- `historyStore`：历史记录写入实现
+- `notifier`：房间播报 / 私聊通知实现
+- `now`：时钟函数
+- `shuffle` / `random`：随机与洗牌实现
+- `ruleset`：后续规则扩展入口
+- `logger`：日志实现
+
+这些依赖是代码级扩展点，不要求直接暴露给最终用户配置文件，但实现时应留出注入能力。
+
 ---
 
 ## 6. 消息监听策略
 
 ## 6.1 总原则
 
-BJ 插件不通过 workflow 入口执行，而是在插件内部直接监听消息。
+BJ 的主流程不通过 workflow runtime 决策，但 quick input 监听器只是**入口适配层**，不是插件核心。
 
 ### 推荐策略
-- 插件在 `apply()` 中直接注册消息监听
-- 每条消息进入后：
+- 插件在 `apply()` 中注册消息监听
+- 监听器只负责把消息适配为 service 输入
+- service 统一处理：
   1. 提取 `channelId / userId / username / text`
   2. 判断当前房间是否允许运行游戏
   3. 判断该房间是否已有 BJ 活跃对局
   4. 如果无对局：只识别开局类命令
   5. 如果有对局：识别加入、开始、要牌、停牌、状态、取消等命令
+
+### 6.1.1 多入口约束
+- `handleQuickInput(session)` 是当前主入口
+- tool package 应调用同一 service 的显式方法
+- 后续若加入私聊回复入口、后台管理入口、统一 dispatcher，也必须走同一个 service / domain 层
 
 ## 6.2 监听优先级
 
@@ -262,7 +355,15 @@ BJ 插件不通过 workflow 入口执行，而是在插件内部直接监听消�
 
 ## 8. 模块划分建议
 
-建议 `blackjack.js` 内部按下面职责组织函数。
+建议 `blackjack.js` 内部按下面职责组织函数。即便 v0.1.0 先放在单文件中，逻辑分层也必须清楚：
+
+- **插件入口层**：`apply()`，负责组装 host/context/service
+- **应用服务层**：对外暴露 `games.blackjack` API，承接 quick input / tool 调用
+- **领域规则层**：发牌、算点、轮次推进、结算，不直接依赖 Koishi / IIROSE
+- **基础设施层**：store、history、notifier、clock、random
+- **表现层**：公屏文案、私聊文案、状态渲染
+
+如果后续把文件拆分成 `service.js`、`rules.js`、`notifier.js`、`tools.js`，应能无痛迁移。
 
 ## 8.1 配置与工具函数层
 
@@ -419,16 +520,23 @@ BJ 插件不通过 workflow 入口执行，而是在插件内部直接监听消�
 
 ## 10.2 实现要求
 
-插件需要封装一个“尝试私聊”能力：
+插件需要封装 notifier，而不是让状态机直接操作具体私聊 API。最小接口建议：
 
 ```js
-async function trySendPrivateMessage(ctx, playerUid, text, options = {})
+const notifier = {
+  sendRoom(session, text, options = {}) {},
+  sendPrivate(player, text, options = {}) {},
+  reportPrivateDeliveryFailure(session, player, error, options = {}) {}
+};
 ```
+
+如果 v0.1.0 不单独拆文件，至少也应在 `createBlackjackService()` 内部把它组织成独立接口对象。
 
 ### 设计要求
 - 私聊发送成功 → 标记成功
 - 私聊发送失败 → 记录日志 + 公屏降级提示
 - 不能因某个玩家私聊失败导致整局中断
+- 状态推进函数只消费 notifier 的结果，不直接依赖底层适配器细节
 
 ## 10.3 技术风险说明
 
@@ -683,34 +791,43 @@ v0.1.0 不必复杂化，只需保存最近若干局即可。
 
 ---
 
-## 17.5 是否注册 tool package（收缩建议）
+## 17.5 tool package 注册策略
 
-结合当前项目框架，建议做如下收缩：
+结合当前项目框架，BJ 应与现有 games 插件保持一致：**quick input 是主交互入口，但 tool package 仍是标准宿主暴露面。**
 
 ### 必做
 - 插件 service
 - quick input 监听
 - 公屏输出
 - 状态持久化
+- 注册 `games-blackjack-package`
 
-### 可做但非必须
-- 注册 tool package 作为 `@Bot 21点` 之类显式入口
+### tool package 的职责
+- 暴露 `@Bot 21点` 一类显式入口
+- 进入 help / package / trigger template 体系
+- 为未来 workflow、proactive、管理工具复用 BJ service 提供标准接入点
 
-原因：
-- 当前已有游戏插件虽然也会注册 tool package
-- 但真正的“对局进行时交互”靠的都是 quick input
-- BJ 首版不应为了 tool package 设计而复杂化主流程
+### 设计约束
+- tool 与 quick input 必须共享同一 service
+- 对局态主流程仍以 quick input 为主，不把每个轮次都强行改造成 workflow
+- BJ 首版不为了 workflow 而复杂化规则内核，但也不能因为首版收缩而失去标准可插拔性
 
 因此本版本的主实现顺序应是：
-1. service
-2. quick input
-3. room reply
-4. best-effort private notify
-5. 最后再考虑是否补 tool package
+1. service / domain core
+2. quick input adapter
+3. room reply + private notifier
+4. tool package adapter
+5. 再补更高阶扩展（如私聊回复、下注、排行榜）
 
 ---
 
 ## 18. 关键函数清单（建议实现）
+
+### 插件入口 / 服务
+- `createBlackjackService(options)`
+- `createBlackjackToolBundle(service)`
+- `createBlackjackNotifier(options)`
+- `apply(host, context)`
 
 ### 配置/存储
 - `createGameStore(config)`
@@ -855,12 +972,13 @@ dealer_turn
 
 本技术设计对应需求文档中的关键决策：
 
-- 不走 workflow：已明确为本地插件监听式实现
-- 参考井字棋：已对齐 store / command interception / room game 模式
-- 公私聊分工：已拆分输出层
+- 主流程不走 workflow：已明确为确定性本地状态机实现
+- 对齐现有 games 插件：已采用 service + quick input + tool package 的标准宿主契约
+- 公私聊分工：已拆分 notifier / output 责任
 - 私聊不收指令：已作为 v0.1.0 边界
-- 关键词响应：已作为主要驱动方式
+- 关键词响应：已作为当前主入口方式
 - 房间单局：已内建 oneGamePerRoom
+- 可插拔性：已把规则、存储、通知、命令入口拆为独立边界
 
 ---
 
@@ -893,14 +1011,14 @@ dealer_turn
 
 ## 22. 开发建议结论
 
-BJ v0.1.0 最佳落地路线不是“做成 AI 工具”，而是：
+BJ v0.1.0 最佳落地路线不是“做成 AI 工具”，也不是“写成只能靠消息监听跑的特例脚本”，而是：
 
-> 参照井字棋与猜数字，做一个**本地状态机驱动、关键词接管聊天窗口、由机器人公屏主持且通过私聊发送手牌**的游戏插件。
+> 参照现有 games 插件，做一个**本地状态机驱动、service-first、以 quick input 为主入口、由机器人公屏主持并通过私聊发送手牌，同时向宿主注册标准 tool package** 的游戏插件。
 
 这样做有几个核心优点：
 
 1. 和现有项目架构最兼容
-2. 不受 workflow 干扰
+2. 不受 workflow 干扰，但不脱离框架标准能力
 3. 游戏体验更像真正的机器人主持
 4. 后续容易继续做：
    - 双倍
@@ -908,5 +1026,6 @@ BJ v0.1.0 最佳落地路线不是“做成 AI 工具”，而是：
    - 下注
    - 排行榜
    - 私聊操作白名单
+   - 统一游戏调度器 / 更多命令入口
 
 这就是 BJ v0.1.0 的推荐技术路线。

@@ -62,7 +62,10 @@ const DEFAULT_CONFIG = {
     maxSteps: 6,
     maxToolCallsPerStep: 4,
     allowParallelReadTools: true,
+    maxProviderRetries: 2,
     promptProfile: {
+      promptDir: 'prompt',
+      activePrompt: '',
       activeStyle: 'plain',
       persist: true,
       stateFile: 'data/runtime/workflow-prompt-profile.json',
@@ -88,6 +91,12 @@ const DEFAULT_CONFIG = {
           aliases: ['爱慕', '暧昧', 'romantic', 'affectionate']
         }
       }
+    },
+    chatOutput: {
+      enabled: true,
+      splitDelimiter: '/',
+      typingDelayPerCharMs: 300,
+      maxTypingDelayMs: 5000
     }
   },
   workflowRunLog: {
@@ -392,10 +401,22 @@ function normalizeConfig(config) {
     parseInteger(normalized.workflow.maxToolCallsPerStep, DEFAULT_CONFIG.workflow.maxToolCallsPerStep)
   );
   normalized.workflow.allowParallelReadTools = normalized.workflow.allowParallelReadTools !== false;
+  normalized.workflow.maxProviderRetries = Math.max(
+    0,
+    parseInteger(normalized.workflow.maxProviderRetries, DEFAULT_CONFIG.workflow.maxProviderRetries)
+  );
   normalized.workflow.promptProfile =
     normalized.workflow.promptProfile && typeof normalized.workflow.promptProfile === 'object' && !Array.isArray(normalized.workflow.promptProfile)
       ? { ...normalized.workflow.promptProfile }
       : {};
+  normalized.workflow.promptProfile.promptDir =
+    typeof normalized.workflow.promptProfile.promptDir === 'string' && normalized.workflow.promptProfile.promptDir.trim()
+      ? normalized.workflow.promptProfile.promptDir.trim()
+      : DEFAULT_CONFIG.workflow.promptProfile.promptDir;
+  normalized.workflow.promptProfile.activePrompt =
+    typeof normalized.workflow.promptProfile.activePrompt === 'string'
+      ? normalized.workflow.promptProfile.activePrompt.trim()
+      : DEFAULT_CONFIG.workflow.promptProfile.activePrompt;
   normalized.workflow.promptProfile.persist = normalized.workflow.promptProfile.persist !== false;
   normalized.workflow.promptProfile.stateFile =
     typeof normalized.workflow.promptProfile.stateFile === 'string' && normalized.workflow.promptProfile.stateFile.trim()
@@ -428,6 +449,23 @@ function normalizeConfig(config) {
   if (!normalized.workflow.promptProfile.styles[normalized.workflow.promptProfile.activeStyle]) {
     normalized.workflow.promptProfile.activeStyle = DEFAULT_CONFIG.workflow.promptProfile.activeStyle;
   }
+  normalized.workflow.chatOutput =
+    normalized.workflow.chatOutput && typeof normalized.workflow.chatOutput === 'object' && !Array.isArray(normalized.workflow.chatOutput)
+      ? { ...normalized.workflow.chatOutput }
+      : {};
+  normalized.workflow.chatOutput.enabled = normalized.workflow.chatOutput.enabled !== false;
+  normalized.workflow.chatOutput.splitDelimiter =
+    typeof normalized.workflow.chatOutput.splitDelimiter === 'string' && normalized.workflow.chatOutput.splitDelimiter.trim()
+      ? normalized.workflow.chatOutput.splitDelimiter.trim().slice(0, 1)
+      : DEFAULT_CONFIG.workflow.chatOutput.splitDelimiter;
+  normalized.workflow.chatOutput.typingDelayPerCharMs = Math.max(
+    0,
+    parseInteger(normalized.workflow.chatOutput.typingDelayPerCharMs, DEFAULT_CONFIG.workflow.chatOutput.typingDelayPerCharMs)
+  );
+  normalized.workflow.chatOutput.maxTypingDelayMs = Math.max(
+    0,
+    parseInteger(normalized.workflow.chatOutput.maxTypingDelayMs, DEFAULT_CONFIG.workflow.chatOutput.maxTypingDelayMs)
+  );
 
   normalized.workflowRunLog = normalized.workflowRunLog || {};
   normalized.workflowRunLog.enabled = normalized.workflowRunLog.enabled !== false;

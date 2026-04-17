@@ -34,6 +34,16 @@ function normalizeTriggerTemplates(value) {
   return [];
 }
 
+function normalizeSkills(value) {
+  if (Array.isArray(value)) {
+    return value
+      .filter(item => isPlainObject(item))
+      .map(item => ({ ...item }));
+  }
+
+  return [];
+}
+
 function normalizeToolPackage(definition = {}) {
   if (!isPlainObject(definition)) {
     throw new TypeError('tool package definition must be an object');
@@ -50,6 +60,7 @@ function normalizeToolPackage(definition = {}) {
       ? definition.version.trim()
       : '0.0.0',
     tools: normalizeArray(definition.tools),
+    skills: normalizeSkills(definition.skills || definition.metadata?.skills),
     outputPlugins: normalizeArray(definition.outputPlugins),
     triggerTemplates: normalizeTriggerTemplates(definition.triggerTemplates),
     hooks: normalizeArray(definition.hooks),

@@ -6,10 +6,11 @@ const assert = require('assert');
 const { parseWorkflowDecisionText } = require('../src/runtime/workflow/decision/parser');
 
 async function testParseDirectJson() {
-  const parsed = parseWorkflowDecisionText('{"status":"final","finalOutput":{"mode":"reply","text":"hello"}}');
+  const parsed = parseWorkflowDecisionText('{"status":"final","finalOutput":{"mode":"reply","text":"hello","renderMode":"markdown"}}');
   assert.equal(parsed.ok, true, 'parser should accept direct JSON');
   assert.equal(parsed.decision.status, 'final', 'parser should preserve final status');
   assert.equal(parsed.decision.finalOutput.text, 'hello', 'parser should preserve final reply text');
+  assert.equal(parsed.decision.finalOutput.renderMode, 'markdown', 'parser should preserve final output render mode');
 }
 
 async function testParseNoisyJson() {
@@ -43,12 +44,13 @@ async function testParseSingleItemArrayJson() {
 }
 
 async function testParseFinalOperationsPayload() {
-  const text = '{"status":"final","finalOutput":{"mode":"none","text":"","operations":[{"kind":"reply.current","content":{"text":"第一条","useMemePipeline":false}},{"kind":"reply.current","content":{"text":"第二条","useMemePipeline":false}}]}}';
+  const text = '{"status":"final","finalOutput":{"mode":"none","text":"","operations":[{"kind":"reply.current","content":{"text":"第一条","renderMode":"markdown","useMemePipeline":false}},{"kind":"reply.current","content":{"text":"第二条","useMemePipeline":false}}]}}';
   const parsed = parseWorkflowDecisionText(text);
 
   assert.equal(parsed.ok, true, 'parser should accept finalOutput.operations payload');
   assert.equal(parsed.decision.status, 'final', 'parser should preserve final status with operations');
   assert.equal(parsed.decision.finalOutput.operations.length, 2, 'parser should preserve all final operations');
+  assert.equal(parsed.decision.finalOutput.operations[0].content.renderMode, 'markdown', 'parser should keep operation render mode payload');
 }
 
 async function testIgnoreRangeArrayInErrorText() {

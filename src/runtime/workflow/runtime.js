@@ -125,6 +125,7 @@ class WorkflowRuntime {
         context,
         protocolRequest,
         availableTools: Array.isArray(input.availableTools) ? input.availableTools : [],
+        visibleSkills: Array.isArray(input.visibleSkills) ? input.visibleSkills : [],
         state: runtimeState
       });
 
@@ -135,6 +136,7 @@ class WorkflowRuntime {
           context,
           protocolRequest,
           availableTools: Array.isArray(input.availableTools) ? input.availableTools : [],
+          visibleSkills: Array.isArray(input.visibleSkills) ? input.visibleSkills : [],
           state: runtimeState
         })
       );
@@ -146,6 +148,7 @@ class WorkflowRuntime {
         context,
         protocolRequest,
         availableTools: Array.isArray(input.availableTools) ? input.availableTools : [],
+        visibleSkills: Array.isArray(input.visibleSkills) ? input.visibleSkills : [],
         decision,
         state: runtimeState
       });
@@ -403,7 +406,8 @@ class WorkflowRuntime {
         kind: 'reply.current',
         content: {
           text: finalOutput.text,
-          useMemePipeline: true
+          useMemePipeline: true,
+          renderMode: finalOutput.renderMode
         }
       });
     }

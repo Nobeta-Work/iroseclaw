@@ -18,6 +18,7 @@ function createReplyCurrentTool(options = {}) {
         text: { type: 'string' },
         emotion: { type: 'string' },
         useMemePipeline: { type: 'boolean' },
+        renderMode: { type: 'string' },
         idempotencyKey: { type: 'string' }
       },
       required: ['text']
@@ -50,7 +51,8 @@ function createReplyCurrentTool(options = {}) {
         content: {
           text: typeof input.text === 'string' ? input.text : '',
           emotion: typeof input.emotion === 'string' ? input.emotion : '',
-          useMemePipeline: input.useMemePipeline === true
+          useMemePipeline: input.useMemePipeline === true,
+          renderMode: typeof input.renderMode === 'string' ? input.renderMode : ''
         }
       });
 

@@ -5,6 +5,7 @@
 
 const { resolveReplyOutput, inferEmotionFromText } = require('../../../utils/meme-format');
 const { buildImageEmotionTag } = require('../../../plugins/image-tag-interceptor');
+const { ensureLeadingRoseMentionSpace } = require('../../../utils/iirose-rose-mention');
 
 function normalizeProbability(value, fallback = 0.5) {
   const num = Number(value);
@@ -35,7 +36,7 @@ function createMemeOutputPlugin(config = {}) {
         ...operation,
         content: {
           ...operation.content,
-          text: plainReply
+          text: ensureLeadingRoseMentionSpace(plainReply)
         }
       };
 

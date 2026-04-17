@@ -57,6 +57,17 @@
    - 井字棋 / 五子棋 / 猜数字
    - BJ 插件应尽量对齐现有 `runtime/plugins/games/*` 风格
 
+6. **已有标准 runtime plugin 宿主契约**
+   - `PluginHost` 已支持：
+     - `registerService()`
+     - `registerToolPackage()`
+     - `registerTriggerTemplate()`
+     - `registerCleanup()`
+   - 现有 games 插件实际都是：
+     - 暴露 `games.*` service
+     - 监听房间 quick input
+     - 同时注册 tool package 作为标准入口
+
 ---
 
 ## 3. 目标插件定位
@@ -96,6 +107,33 @@
 - 不做跨房间共享牌局
 - 不做 AI 玩家
 - 不做图形 UI，仅文本流程
+
+### 3.4 架构级目标
+
+除了“能跑通一局”，BJ v0.1.0 还必须满足以下设计目标：
+
+1. **遵守现有 games 插件标准契约**
+   - 作为 `runtime plugin` 注册
+   - 暴露 `games.blackjack` service
+   - 注册 quick input 监听
+   - 注册标准 tool package 作为宿主可发现入口
+
+2. **核心状态机与具体入口解耦**
+   - 游戏规则、状态推进、结算逻辑不能直接耦合到：
+     - Koishi `session`
+     - IIROSE 私聊 API
+     - workflow / LLM
+   - quick input、tool 调用、未来私聊回复都应复用同一套 service / domain 逻辑
+
+3. **适配层可替换**
+   - 存储方式可替换（文件 / state store / 后续外部存储）
+   - 私聊通知器可替换（IIROSE 定向私聊 / 降级公屏提示）
+   - 命令入口可扩展（房间短命令 / `@Bot` 工具入口 / 后续私聊入口）
+
+4. **为后续规则扩展留口**
+   - 后续加入下注、保险、分牌、双倍、排行榜时
+   - 应优先通过扩展规则模块、结算策略、service 能力完成
+   - 而不是推翻 v0.1.0 的整体结构
 
 ---
 
@@ -661,20 +699,39 @@
 - 更适合 runtime plugin + state 管理
 - 不适合仅靠 `keywords + handler` 一次性完成
 
-## 12.3 是否需要 tool package
+## 12.3 tool package 与标准宿主接入
 
-v0.1.0 可以先不强依赖 tool package，直接：
-- 监听消息
-- 识别游戏命令
-- 维护状态
+v0.1.0 的**主对局流程**不应依赖 workflow 决策，但仍应像现有 games 插件一样注册标准 `tool package`。
 
-后续如要支持 AI 自主主持、工作流调用，再补：
-- `games.blackjack.create`
+原因：
+- 这样 BJ 不会成为“只能靠内部消息监听运作”的特例插件
+- 能纳入当前 help / package list / trigger template 体系
+- 后续若要支持 `@Bot 21点`、proactive 提示、workflow 显式调用，可直接复用同一 service 契约
+- 保持与 `games-tictactoe`、`games-gomoku`、`games-number-guess` 的宿主接入方式一致
+
+因此要求调整为：
+
+### 必须
+- 注册 `games.blackjack` service
+- 注册 quick input 监听
+- 注册 `games-blackjack-package`
+
+### tool package 至少应暴露
+- `games.blackjack.start`
 - `games.blackjack.join`
+- `games.blackjack.status`
+- `games.blackjack.rules`
+- `games.blackjack.cancel`
+
+### 可选暴露
+- `games.blackjack.begin`
+- `games.blackjack.leave`
 - `games.blackjack.hit`
 - `games.blackjack.stand`
-- `games.blackjack.status`
-- `games.blackjack.cancel`
+
+约束：
+- tool 的实现必须复用同一个 `games.blackjack` service
+- 不允许为 tool 再复制一套独立规则或状态机逻辑
 
 ---
 
@@ -684,11 +741,19 @@ v0.1.0 可以先不强依赖 tool package，直接：
 
 当前项目主要依赖 `@机器人` 触发；BJ 插件需要在“游戏进行中”支持无 @ 的简短命令。
 
-因此需要新增或扩展一种机制：
+结合现有 games 插件实现，BJ **不需要额外发明一套新的宿主机制**，而应沿用当前标准模式：
+
+- 在 `apply()` 中注册房间消息监听
+- 监听器只负责把消息转交给 `games.blackjack` service 的 quick input 入口
+- 由 service 统一完成命令识别、状态推进、权限判断、结果生成
+
+因此这里真正的要求是：
 
 - 当房间存在活跃 BJ 对局时
 - 对该房间消息进行额外匹配
 - 识别游戏命令并优先交给 BJ 插件处理
+- 但 `quick input` 只是**一个入口适配层**
+- `tool package`、后续私聊入口、未来统一 dispatcher 若接入，也必须走同一 service 契约
 
 ## 13.2 私聊权限要求
 
@@ -717,6 +782,30 @@ v0.1.0 可以先不强依赖 tool package，直接：
 - `logs/bot.log`
 - 或 `data/games-blackjack/` 下的持久化日志
 
+## 13.4 可插拔与扩展要求
+
+BJ v0.1.0 必须明确以下扩展边界：
+
+1. **通知器可替换**
+   - 房间播报与私聊发送应通过通知接口封装
+   - 不把 IIROSE 的具体发送细节写死在状态机里
+
+2. **存储层可替换**
+   - 默认可先用 `data/games-blackjack/*.json`
+   - 但 service 层应允许注入替代 store
+
+3. **命令入口可扩展**
+   - 房间 short command 是当前主入口
+   - `@Bot` tool 调用、未来私聊回复、后台管理入口都应复用同一 service API
+
+4. **规则模块可扩展**
+   - v0.1.0 先只做基础规则
+   - 后续扩展保险 / 分牌 / 双倍时，应能在规则层和结算层演进，而不是改消息接入层
+
+5. **测试依赖可注入**
+   - 时钟、随机源、洗牌器、私聊发送器应允许替换
+   - 以便做稳定测试和回放测试
+
 ---
 
 ## 14. 验收标准（v0.1.0）
@@ -734,6 +823,9 @@ v0.1.0 可以先不强依赖 tool package，直接：
 9. 同房不会同时存在两局冲突对局
 10. 非当前玩家输入不会破坏流程
 11. 超时 / 私聊失败 / 取消局面不会导致插件崩溃
+12. 插件会注册 `games.blackjack` service，供其他宿主能力复用
+13. 插件会注册标准 `games-blackjack-package`，不会成为框架内特例实现
+14. 游戏核心规则与状态推进可在不依赖 Koishi / workflow / 私聊 API 的前提下单独测试
 
 ---
 

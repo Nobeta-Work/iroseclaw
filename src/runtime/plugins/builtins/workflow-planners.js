@@ -14,6 +14,7 @@ module.exports = {
         useNativeSessionContext: config.openclaw?.useNativeSessionContext === true,
         meme: config.meme || {},
         timeoutMs: config.openclaw?.timeout || 30000,
+        maxProviderRetries: config.workflow?.maxProviderRetries,
         promptProfile: config.workflow?.promptProfile || {},
         promptProfileService: runtimeHost?.getService?.('workflow.prompt-profile') || null
       }
@@ -26,6 +27,7 @@ module.exports = {
         useNativeSessionContext: config.openclaw?.useNativeSessionContext === true,
         meme: config.meme || {},
         timeoutMs: config.openclaw?.timeout || 30000,
+        maxProviderRetries: config.workflow?.maxProviderRetries,
         promptProfile: config.workflow?.promptProfile || {},
         promptProfileService: runtimeHost?.getService?.('workflow.prompt-profile') || null
       },

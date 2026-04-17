@@ -9,6 +9,7 @@ const { OutputRuntime } = require('../src/runtime/output/runtime');
 const { PolicyEngine } = require('../src/runtime/policy/engine');
 const { WorkflowRuntime } = require('../src/runtime/workflow/runtime');
 const { createMemeOutputPlugin } = require('../src/runtime/output/plugins/meme-output');
+const { createIiroseMarkdownOutputPlugin } = require('../src/runtime/output/plugins/iirose-markdown-output');
 const { createToolResult } = require('../src/contracts/tool');
 const { createMessageRouteTool } = require('../src/tools/builtins/message-route');
 
@@ -128,6 +129,79 @@ async function testFinalOperationsOutput() {
   assert.equal(result.finalOutputResults.length, 2, 'runtime should execute all final output operations');
   assert.equal(sent[0], '第一条', 'final operations should keep output order');
   assert.equal(sent[1], '第二条', 'final operations should emit all planned outputs');
+}
+
+async function testFinalMarkdownRenderOutput() {
+  const sent = [];
+  const outputRuntime = new OutputRuntime({
+    policyEngine: new PolicyEngine(),
+    sender: async (operation) => {
+      sent.push(operation.content.text);
+      return { operationId: operation.operationId };
+    }
+  });
+  outputRuntime.registerPlugin(createIiroseMarkdownOutputPlugin());
+
+  const runtime = new WorkflowRuntime({
+    planner: {
+      async decideNextStep() {
+        return {
+          status: 'final',
+          finalOutput: {
+            mode: 'reply',
+            text: '## 代码示例\n```js\nconsole.log(1)\n```',
+            renderMode: 'markdown'
+          }
+        };
+      }
+    },
+    toolRegistry: new ToolRegistry(),
+    outputRuntime,
+    policyEngine: new PolicyEngine()
+  });
+
+  const result = await runtime.run({
+    trigger: {
+      kind: 'message.mentioned',
+      session: {
+        platform: 'iirose',
+        channelId: 'room-md',
+        userId: 'u-md',
+        username: 'Markdown',
+        messageId: 'm-md'
+      },
+      payload: {
+        content: 'markdown'
+      }
+    }
+  });
+
+  assert.equal(result.decision.status, 'final', 'markdown final output should finalize');
+  assert.equal(sent.length, 1, 'markdown final output should send once');
+  assert.equal(sent[0].startsWith('\\\\\\*\n'), true, 'markdown final output should prepend IIROSE markdown prefix');
+}
+
+async function testAutoMarkdownCodeFenceFallback() {
+  const sent = [];
+  const outputRuntime = new OutputRuntime({
+    policyEngine: new PolicyEngine(),
+    sender: async (operation) => {
+      sent.push(operation.content.text);
+      return { operationId: operation.operationId };
+    }
+  });
+  outputRuntime.registerPlugin(createIiroseMarkdownOutputPlugin());
+
+  const result = await outputRuntime.execute({
+    kind: 'reply.current',
+    content: {
+      text: '```js\nconsole.log(42)\n```',
+      useMemePipeline: false
+    }
+  });
+
+  assert.equal(result.ok, true, 'direct output runtime execute should succeed');
+  assert.equal(sent[0], '\\\\\\*\n```js\nconsole.log(42)\n```', 'code fence should auto-enable markdown transport prefix');
 }
 
 async function testToolStringOutput() {
@@ -383,6 +457,8 @@ async function testWorkflowOutputBudget() {
 async function main() {
   await testFinalReplyOutput();
   await testFinalOperationsOutput();
+  await testFinalMarkdownRenderOutput();
+  await testAutoMarkdownCodeFenceFallback();
   await testToolStringOutput();
   await testHighRiskRouteBlockedByPolicy();
   await testMultiStepWorkflowLoop();

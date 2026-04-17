@@ -50,10 +50,10 @@ async function main() {
   });
 
   assert.equal(sent.length, 1, 'workflow mode should send one help reply');
-  assert.ok(sent[0].includes('功能概览'), 'workflow mode should route help through canonical tool/output runtime');
+  assert.ok(sent[0].startsWith('\\\\\\*\n'), 'workflow mode help should prepend markdown-render prefix line');
   assert.equal(sent[0].includes('暂无可用技能'), false, 'workflow mode help should no longer claim there are no skills when runtime tools exist');
-  assert.ok(sent[0].includes('你可以直接这样说'), 'workflow mode help should focus on user-facing guidance');
-  assert.ok(sent[0].includes('内部操作已隐藏'), 'workflow mode help should explicitly hide internal operation tools');
+  assert.ok(sent[0].includes('21点开局'), 'workflow mode help should expose Blackjack in compact help text');
+  assert.ok(sent[0].includes('管理/运维类内部操作已隐藏'), 'workflow mode help should explicitly hide internal operation tools');
   console.log('✅ PASS: runtime mode integration');
 }
 

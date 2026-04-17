@@ -79,6 +79,15 @@ async function main() {
             }
           }
         ],
+        skills: [
+          {
+            id: 'demo.echo-skill',
+            name: 'Echo Skill',
+            summary: 'Echo through demo tool',
+            toolNames: ['demo.echo'],
+            tags: ['demo']
+          }
+        ],
         outputPlugins: [
           {
             transform(operation) {
@@ -110,7 +119,10 @@ async function main() {
   assert.equal(packages.length, 1, 'host should list registered tool package');
   assert.equal(packages[0].name, 'demo-package', 'tool package name should be preserved');
   assert.equal(packages[0].tools.includes('demo.echo'), true, 'tool package should register tools');
+  assert.equal(packages[0].skills.includes('demo.echo-skill'), true, 'tool package should register skills');
   assert.equal(host.toolRegistry.has('demo.echo'), true, 'registered tool should be visible through tool registry');
+  assert.equal(host.getSkill('demo.echo-skill')?.toolNames.includes('demo.echo'), true, 'registered skill should be visible through skill catalog');
+  assert.equal(host.listSkills().length, 1, 'host should list registered skills');
   assert.equal(host.triggerTemplateRegistry.has('demo.trigger'), true, 'tool package should register trigger template');
   assert.equal(host.getProvider('mock-provider'), provider, 'host should register provider');
   assert.equal(host.getPlanner('mock-planner'), planner, 'host should register planner');

@@ -34,12 +34,37 @@ async function sendReplyThroughRuntime(outputRuntime, executionContext, text, op
     kind: 'reply.current',
     content: {
       text,
-      useMemePipeline: options.useMemePipeline === true
+      useMemePipeline: options.useMemePipeline === true,
+      renderMode: typeof options.renderMode === 'string' ? options.renderMode : ''
     },
     options: {
       recordConversation: options.recordConversation !== false
     }
   }, executionContext);
+}
+
+function isSilentWorkflowFailureReason(reason = '') {
+  const normalized = String(reason || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.startsWith('provider error:') ||
+    normalized.startsWith('provider error text:') ||
+    normalized.startsWith('invalid workflow decision:') ||
+    normalized.includes('empty direct reply fallback output') ||
+    normalized.includes('agent reply fallback failed')
+  );
+}
+
+function shouldSuppressWorkflowFallback(workflowResult = {}) {
+  const workflowDecision = workflowResult?.decision;
+  if (workflowDecision?.status !== 'error') {
+    return false;
+  }
+
+  return isSilentWorkflowFailureReason(workflowDecision.audit?.reason || '');
 }
 
 async function handleWorkflowTrigger(workflowRuntime, toolRegistry, outputRuntime, pickFallback, trigger, executionContext, options = {}) {
@@ -49,21 +74,23 @@ async function handleWorkflowTrigger(workflowRuntime, toolRegistry, outputRuntim
     context: executionContext,
     availableTools: Array.isArray(options.availableTools)
       ? options.availableTools
-      : toolRegistry.list({ workflowVisibleOnly: true })
+      : toolRegistry.list({ workflowVisibleOnly: true }),
+    visibleSkills: Array.isArray(options.visibleSkills) ? options.visibleSkills : []
   });
 
   const workflowDecision = workflowResult?.decision;
   const hasFinalOutput = Boolean(workflowResult?.outputResult);
   const hasToolOutput = Array.isArray(workflowResult?.outputResults) && workflowResult.outputResults.length > 0;
+  const suppressFallback = shouldSuppressWorkflowFallback(workflowResult);
 
   if (workflowDecision?.status === 'error' || workflowDecision?.status === 'blocked') {
-    if (options.sendFallbackOnError === true) {
+    if (options.sendFallbackOnError === true && !suppressFallback) {
       await sendReplyThroughRuntime(outputRuntime, executionContext, pickFallback());
     }
     return workflowResult;
   }
 
-  if (!hasFinalOutput && !hasToolOutput && options.sendFallbackOnError === true) {
+  if (!hasFinalOutput && !hasToolOutput && options.sendFallbackOnError === true && !suppressFallback) {
     await sendReplyThroughRuntime(outputRuntime, executionContext, pickFallback());
   }
 
@@ -85,6 +112,7 @@ function buildExecutionContext(options = {}) {
     ctx,
     userId: trigger.userId,
     username: trigger.username,
+    currentEventId: options.currentEventId || null,
     triggerTemplate: template,
     contextService,
     conversationStore: contextService,
@@ -167,6 +195,49 @@ function resolveDirectToolCall(options = {}, executionContext = {}) {
   };
 }
 
+function resolveDirectReplyAgentCall(options = {}, executionContext = {}, chatRequest = null) {
+  const {
+    trigger,
+    directReplyAgent,
+    outputRuntime
+  } = options;
+  const content = typeof trigger?.cleanedContent === 'string' ? trigger.cleanedContent.trim() : '';
+
+  if (!content || !directReplyAgent || typeof directReplyAgent.generateReply !== 'function') {
+    return null;
+  }
+
+  if (typeof directReplyAgent.shouldHandleRequest === 'function' && !directReplyAgent.shouldHandleRequest(content)) {
+    return null;
+  }
+
+  return async () => {
+    const result = await directReplyAgent.generateReply({
+      trigger,
+      protocolRequest: chatRequest?.protocolRequest || {},
+      context: executionContext,
+      availableTools: Array.isArray(options.availableTools) ? options.availableTools : [],
+      visibleSkills: Array.isArray(options.visibleSkills) ? options.visibleSkills : []
+    });
+
+    if (!result?.ok || !String(result.text || '').trim()) {
+      return null;
+    }
+
+    await sendReplyThroughRuntime(outputRuntime, executionContext, result.text, {
+      renderMode: result.renderMode,
+      useMemePipeline: result.renderMode !== 'markdown'
+    });
+
+    return {
+      mode: 'direct-agent',
+      replyText: result.text,
+      renderMode: result.renderMode,
+      provider: result.provider || ''
+    };
+  };
+}
+
 async function invokeWorkflowChat(options = {}) {
   const {
     trigger,
@@ -186,6 +257,9 @@ async function invokeWorkflowChat(options = {}) {
   }
 
   const conversationContext = resolveConversationContext(options);
+  const availableTools = Array.isArray(options.availableTools)
+    ? options.availableTools
+    : toolRegistry.list({ workflowVisibleOnly: true });
 
   const chatRequest = buildChatProtocolRequest({
     userId: trigger.userId,
@@ -196,7 +270,7 @@ async function invokeWorkflowChat(options = {}) {
     platform: session.platform || 'iirose',
     content: trigger.cleanedContent,
     isPrivate: trigger.isPrivateSession === true,
-    availableSkills: typeof skillManager?.list === 'function'
+      availableSkills: typeof skillManager?.list === 'function'
       ? skillManager.list().map(skill => skill.name)
       : [],
     conversationContext,
@@ -209,6 +283,14 @@ async function invokeWorkflowChat(options = {}) {
       mode: 'chat-blocked',
       replyText: chatRequest.replyText || pickFallback()
     };
+  }
+
+  const directReplyAgentCall = resolveDirectReplyAgentCall(options, executionContext, chatRequest);
+  if (directReplyAgentCall) {
+    const directReplyResult = await directReplyAgentCall();
+    if (directReplyResult) {
+      return directReplyResult;
+    }
   }
 
   const workflowResult = await handleWorkflowTrigger(
@@ -236,9 +318,8 @@ async function invokeWorkflowChat(options = {}) {
     executionContext,
     {
       protocolRequest: chatRequest.protocolRequest,
-      availableTools: Array.isArray(options.availableTools)
-        ? options.availableTools
-        : toolRegistry.list({ workflowVisibleOnly: true }),
+      availableTools,
+      visibleSkills: Array.isArray(options.visibleSkills) ? options.visibleSkills : [],
       sendFallbackOnError: template?.sendFallbackOnError !== false
     }
   );
@@ -299,10 +380,13 @@ async function handleHybridMentionMessage(options = {}) {
 
 module.exports = {
   extractKeywordArgs,
+  isSilentWorkflowFailureReason,
+  shouldSuppressWorkflowFallback,
   sendReplyThroughRuntime,
   buildExecutionContext,
   resolveConversationContext,
   resolveDirectToolCall,
+  resolveDirectReplyAgentCall,
   invokeWorkflowChat,
   handleWorkflowTrigger,
   handleWorkflowMentionMessage,

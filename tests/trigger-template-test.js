@@ -75,7 +75,18 @@ async function main() {
     context: {
       triggerTemplate: mergedPrivateTemplate
     },
-    availableTools: []
+    availableTools: [],
+    visibleSkills: [
+      {
+        id: 'communication.private-messaging',
+        name: '私聊沟通',
+        summary: '向明确 uid 的用户发送私聊',
+        adminOnly: true,
+        tags: ['communication', 'private'],
+        toolNames: ['communication.private.send'],
+        examples: ['给某人发送私聊提醒']
+      }
+    ]
   });
 
   assert.equal(mentionTemplate.allowDirectToolMatch, true, 'message.mentioned should allow direct tool matching');
@@ -89,6 +100,8 @@ async function main() {
   assert.equal(mergedPrivateTemplate.sendFallbackOnError, true, 'plugin template should inherit fallback behaviour from built-in private template');
   assert.equal(mergedPrivateTemplate.instruction.includes('管理员可附加说明'), true, 'plugin template should preserve custom instruction');
   assert.equal(compiled.prompt.includes('trigger instruction: '), true, 'workflow prompt should include trigger instruction');
+  assert.equal(compiled.prompt.includes('可用 Skills:'), true, 'workflow prompt should include visible skills section');
+  assert.equal(compiled.prompt.includes('communication.private-messaging'), true, 'workflow prompt should include visible skill id');
   console.log('✅ PASS: trigger template regression');
 }
 

@@ -53,6 +53,16 @@ function createHelpOverviewTool(options = {}) {
         ok: true,
         name: 'help.show',
         result: helpText,
+        outputs: [
+          {
+            kind: 'reply.current',
+            content: {
+              text: helpText,
+              renderMode: 'markdown',
+              useMemePipeline: false
+            }
+          }
+        ],
         summary: 'rendered help overview'
       });
     }

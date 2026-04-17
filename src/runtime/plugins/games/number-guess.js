@@ -1234,6 +1234,29 @@ module.exports = {
         createExtendTool(service),
         createQuitTool(service)
       ],
+      skills: [
+        {
+          id: 'games.number-guess',
+          name: '猜数字',
+          summary: '发起并管理多人猜数字对局。',
+          toolNames: [
+            'games.number-guess.start',
+            'games.number-guess.mode',
+            'games.number-guess.guess',
+            'games.number-guess.status',
+            'games.number-guess.rules',
+            'games.number-guess.restart',
+            'games.number-guess.extend',
+            'games.number-guess.quit'
+          ],
+          tags: ['games', 'number-guess'],
+          examples: ['猜数字', '猜数字状态'],
+          metadata: {
+            priority: 75,
+            pluginName: 'games-number-guess'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'games-number-guess',
         description: '多人猜数字（AB 反馈）'

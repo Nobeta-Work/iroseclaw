@@ -59,6 +59,16 @@ function getPackageDirCandidates() {
   return uniquePaths(dirs);
 }
 
+function getEnvPackageDirCandidates() {
+  return uniquePaths([
+    process.env.IROSE_OPENCLAW_HOME,
+    process.env.OPENCLAW_HOME
+  ]
+    .filter(Boolean)
+    .map(item => String(item).trim())
+    .filter(Boolean));
+}
+
 function getEntryCandidates(packageDir) {
   if (!packageDir) return [];
   return uniquePaths([
@@ -184,6 +194,19 @@ class OpenClawAgentBridge extends BaseModelProvider {
     if (explicitBinary) {
       this.openclawInvocation = explicitBinary;
       return explicitBinary;
+    }
+
+    for (const packageDir of getEnvPackageDirCandidates()) {
+      for (const entryPath of getEntryCandidates(packageDir)) {
+        if (fs.existsSync(entryPath)) {
+          this.openclawInvocation = this._buildExecutableInvocation(
+            process.execPath,
+            [entryPath],
+            `${process.execPath} ${entryPath}`
+          );
+          return this.openclawInvocation;
+        }
+      }
     }
 
     if (this._canExecuteOpenClawCli()) {

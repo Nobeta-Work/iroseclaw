@@ -13,6 +13,7 @@ const { createFallbackPicker } = require('./utils/fallback');
 const { ContextService } = require('./runtime/context/service');
 const { TriggerRouter } = require('./runtime/trigger/router');
 const { TriggerTemplateRegistry } = require('./runtime/trigger/template-registry');
+const { SkillCatalog } = require('./runtime/skills/catalog');
 const { ToolRegistry } = require('./tools/registry');
 const { PolicyEngine } = require('./runtime/policy/engine');
 const { WorkflowRunLog } = require('./runtime/audit/workflow-run-log');
@@ -20,7 +21,9 @@ const { OutputRuntime } = require('./runtime/output/runtime');
 const { PluginHost } = require('./runtime/plugins/host');
 const runtimeGovernancePlugin = require('./runtime/plugins/builtins/runtime-governance');
 const defaultTriggerTemplatesPlugin = require('./runtime/plugins/builtins/default-trigger-templates');
+const chatLikeOutputPlugin = require('./runtime/plugins/builtins/chat-like-output');
 const memeOutputPlugin = require('./runtime/plugins/builtins/meme-output');
+const iiroseMarkdownOutputPlugin = require('./runtime/plugins/builtins/iirose-markdown-output');
 const legacySkillBridgePlugin = require('./runtime/plugins/builtins/legacy-skill-bridge');
 const messagingToolsPlugin = require('./runtime/plugins/builtins/messaging-tools');
 const openclawProviderPlugin = require('./runtime/plugins/builtins/openclaw-provider');
@@ -30,9 +33,12 @@ const workflowPlannersPlugin = require('./runtime/plugins/builtins/workflow-plan
 const legacyOpenClawCompatPlugin = require('./runtime/plugins/builtins/legacy-openclaw-compat');
 const helpPlugin = require('./runtime/plugins/builtins/help');
 const musicPlugin = require('./runtime/plugins/builtins/music');
+const contextParticipantsPlugin = require('./runtime/plugins/builtins/context-participants');
+const communicationPrivateMessagingPlugin = require('./runtime/plugins/builtins/communication-private-messaging');
 const tictactoePlugin = require('./runtime/plugins/games/tictactoe');
 const gomokuPlugin = require('./runtime/plugins/games/gomoku');
 const numberGuessPlugin = require('./runtime/plugins/games/number-guess');
+const blackjackPlugin = require('./runtime/plugins/games/blackjack');
 const iiroseSystemPlugin = require('./runtime/plugins/iirose/system');
 const iiroseUserProfilePlugin = require('./runtime/plugins/iirose/user-profile');
 const iiroseRoomPlugin = require('./runtime/plugins/iirose/room');
@@ -49,6 +55,7 @@ const { OpenAICompatibleProvider } = require('./ai/providers/openai-compatible-p
 const { MockProvider } = require('./ai/providers/mock-provider');
 const { MemoryStateStore } = require('./runtime/state/memory-store');
 const { WorkflowRuntime } = require('./runtime/workflow/runtime');
+const { createDirectReplyAgent } = require('./runtime/direct-reply-agent');
 const {
   sendReplyThroughRuntime,
   handleWorkflowTrigger,
@@ -82,6 +89,27 @@ function normalizeProbability(value, fallback = 0.5) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
   return Math.min(1, Math.max(0, num));
+}
+
+function toNonNegativeInt(value, fallback = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return fallback;
+  return Math.floor(num);
+}
+
+function isIiroseSession(session) {
+  return String(session?.platform || '').trim().toLowerCase() === 'iirose';
+}
+
+async function waitForTypingDelay(operation, session, sendOptions = {}) {
+  if (sendOptions.disableTypingDelay === true) return;
+  if (!isIiroseSession(session)) return;
+  if (operation?.content?.renderMode === 'markdown') return;
+
+  const delayMs = toNonNegativeInt(operation?.metadata?.typingDelayMs, 0);
+  if (delayMs <= 0) return;
+
+  await new Promise(resolve => setTimeout(resolve, delayMs));
 }
 
 function loadConfig() {
@@ -268,6 +296,7 @@ function resolveWorkflowPlanner(finalConfig, context = {}) {
         useNativeSessionContext: allowNativeSessionContext,
         meme: finalConfig.meme || {},
         timeoutMs: finalConfig.openclaw?.timeout || 30000,
+        maxProviderRetries: finalConfig.workflow?.maxProviderRetries,
         promptProfile: finalConfig.workflow?.promptProfile || {},
         promptProfileService: context.host?.getService?.('workflow.prompt-profile') || null
       }
@@ -283,6 +312,7 @@ function resolveWorkflowPlanner(finalConfig, context = {}) {
         useNativeSessionContext: allowNativeSessionContext,
         meme: finalConfig.meme || {},
         timeoutMs: finalConfig.openclaw?.timeout || 30000,
+        maxProviderRetries: finalConfig.workflow?.maxProviderRetries,
         promptProfile: finalConfig.workflow?.promptProfile || {},
         promptProfileService: context.host?.getService?.('workflow.prompt-profile') || null
       }
@@ -361,9 +391,17 @@ function apply(ctx, config = {}) {
 
       if (operation.kind === 'message.route') {
         const bot = targetSession?.bot || senderContext?.bots?.[0];
-        const routeChannelId = operation.target?.channelId;
+        const routeChannelId = operation.target?.channelId
+          || (
+            operation.target?.scope === 'private'
+            && typeof operation.target?.userId === 'string'
+            && operation.target.userId.trim()
+              ? `private:${operation.target.userId.trim()}`
+              : ''
+          );
 
         if (routeChannelId && bot?.sendMessage) {
+          await waitForTypingDelay(operation, targetSession, mergedSendOptions);
           return bot.sendMessage(routeChannelId, operation.content?.text || '');
         }
       }
@@ -387,7 +425,10 @@ function apply(ctx, config = {}) {
         outgoingContent,
         {
           ...mergedSendOptions,
-          recordText: operation.content?.text || ''
+          outputOperation: operation,
+          recordText: typeof operation.metadata?.recordText === 'string'
+            ? operation.metadata.recordText
+            : (operation.content?.text || '')
         }
       );
     }
@@ -402,6 +443,7 @@ function apply(ctx, config = {}) {
     ? new SkillManager()
     : null;
   const toolRegistry = new ToolRegistry();
+  const skillCatalog = new SkillCatalog({ logger });
   skillManager?.loadBuiltin?.({ skillManager });
   const contextService = new ContextService(finalConfig.messageMemory || finalConfig.conversationContext || {});
   const triggerTemplateRegistry = new TriggerTemplateRegistry();
@@ -411,6 +453,7 @@ function apply(ctx, config = {}) {
     ctx,
     skillManager,
     toolRegistry,
+    skillCatalog,
     outputRuntime,
     policyEngine,
     triggerTemplateRegistry,
@@ -432,6 +475,18 @@ function apply(ctx, config = {}) {
     ctx,
     host: pluginHost
   });
+  const directReplyAgent = createDirectReplyAgent({
+    provider: modelProvider,
+    logger,
+    config: {
+      useNativeSessionContext: finalConfig.openclaw?.useNativeSessionContext === true,
+      timeoutMs: finalConfig.openclaw?.timeout || 30000,
+      maxProviderRetries: finalConfig.workflow?.maxProviderRetries,
+      promptProfile: finalConfig.workflow?.promptProfile || {},
+      promptProfileService: pluginHost.getService('workflow.prompt-profile') || null
+    }
+  });
+  pluginHost.registerService('direct-reply-agent', directReplyAgent);
   const workflowPlanner = resolveWorkflowPlanner(finalConfig, {
     adapter,
     getLegacyAdapter,
@@ -458,16 +513,21 @@ function apply(ctx, config = {}) {
   pluginHost.setWorkflowRuntime(workflowRuntime);
   pluginHost.registerPlugin(runtimeGovernancePlugin);
   pluginHost.registerPlugin(defaultTriggerTemplatesPlugin);
+  pluginHost.registerPlugin(chatLikeOutputPlugin);
   pluginHost.registerPlugin(memeOutputPlugin);
+  pluginHost.registerPlugin(iiroseMarkdownOutputPlugin);
   if (skillManager) {
     pluginHost.registerPlugin(legacySkillBridgePlugin);
   }
   pluginHost.registerPlugin(messagingToolsPlugin);
   pluginHost.registerPlugin(helpPlugin);
   pluginHost.registerPlugin(musicPlugin);
+  pluginHost.registerPlugin(contextParticipantsPlugin);
+  pluginHost.registerPlugin(communicationPrivateMessagingPlugin);
   pluginHost.registerPlugin(tictactoePlugin);
   pluginHost.registerPlugin(gomokuPlugin);
   pluginHost.registerPlugin(numberGuessPlugin);
+  pluginHost.registerPlugin(blackjackPlugin);
   pluginHost.registerPlugin(iiroseSystemPlugin);
   pluginHost.registerPlugin(iiroseUserProfilePlugin);
   pluginHost.registerPlugin(iiroseRoomPlugin);
@@ -556,6 +616,12 @@ function apply(ctx, config = {}) {
         try {
           const trigger = triggerRouter.routePlatformEvent(eventName, session, data);
           const template = triggerTemplateRegistry.get(trigger.kind);
+          const visibleTools = pluginHost.filterVisibleTools(
+            triggerTemplateRegistry.resolveTools(toolRegistry, trigger.kind),
+            {
+              isAdmin: trigger.isAdminSender === true
+            }
+          );
           const executionContext = {
             session,
             ctx,
@@ -577,7 +643,11 @@ function apply(ctx, config = {}) {
             executionContext,
             {
               sendFallbackOnError: template.sendFallbackOnError,
-              availableTools: triggerTemplateRegistry.resolveTools(toolRegistry, trigger.kind)
+              availableTools: visibleTools,
+              visibleSkills: pluginHost.resolveVisibleSkills(visibleTools, {
+                triggerKind: trigger.kind,
+                isAdmin: trigger.isAdminSender === true
+              })
             }
           );
         } catch (error) {
@@ -637,6 +707,16 @@ function apply(ctx, config = {}) {
 
       if (runtimeMode !== 'legacy') {
         const template = triggerTemplateRegistry.get(trigger.kind);
+        const availableTools = pluginHost.filterVisibleTools(
+          triggerTemplateRegistry.resolveTools(toolRegistry, trigger.kind),
+          {
+            isAdmin: trigger.isAdminSender === true
+          }
+        );
+        const visibleSkills = pluginHost.resolveVisibleSkills(availableTools, {
+          triggerKind: trigger.kind,
+          isAdmin: trigger.isAdminSender === true
+        });
         const messageResult = runtimeMode === 'hybrid'
           ? await handleHybridMentionMessage({
               trigger,
@@ -648,7 +728,10 @@ function apply(ctx, config = {}) {
               outputRuntime,
               pickFallback,
               contextService,
+              directReplyAgent,
               template,
+              availableTools,
+              visibleSkills,
               legacyChatHandler: async () => getLegacyMessageHandler()({
                 sourceSession: session,
                 userId,
@@ -677,8 +760,10 @@ function apply(ctx, config = {}) {
               outputRuntime,
               pickFallback,
               contextService,
+              directReplyAgent,
               currentEventId: storedMessage?.id,
-              availableTools: triggerTemplateRegistry.resolveTools(toolRegistry, trigger.kind),
+              availableTools,
+              visibleSkills,
               template,
               runtimeConfig: finalConfig
             });
@@ -691,6 +776,9 @@ function apply(ctx, config = {}) {
         }
         if (messageResult?.mode === 'workflow-chat') {
           logger.INFO('WORKFLOW', `Workflow 聊天：${username}: ${cleaned}`);
+        }
+        if (messageResult?.mode === 'direct-agent') {
+          logger.INFO('DIRECT', `Direct reply agent：${username}: ${cleaned}`);
         }
         return;
       }
@@ -799,12 +887,14 @@ function apply(ctx, config = {}) {
   return {
     skillManager,
     toolRegistry,
+    skillCatalog,
     contextService,
     triggerRouter,
     triggerTemplateRegistry,
     pluginHost,
     adapter,
     policyEngine,
+    skillCatalog,
     stateStore,
     hookRegistry,
     outputRuntime,
@@ -817,6 +907,19 @@ function apply(ctx, config = {}) {
     reload() { logger.INFO('RELOAD', 'Reloading plugin...'); },
     getSkills() { return skillManager?.list?.() || []; },
     getTools(options) { return toolRegistry.list(options); },
+    getWorkflowSkills() { return pluginHost.listSkills(); },
+    getVisibleWorkflowSkills(triggerKind = '', options = {}) {
+      const visibleTools = pluginHost.filterVisibleTools(
+        triggerTemplateRegistry.resolveTools(toolRegistry, triggerKind),
+        {
+          isAdmin: options.isAdmin === true
+        }
+      );
+      return pluginHost.resolveVisibleSkills(visibleTools, {
+        triggerKind,
+        isAdmin: options.isAdmin === true
+      });
+    },
     executeSkill(name, args, session) { return skillManager?.execute?.(name, args, session) ?? null; },
     executeTool(name, context, input) { return toolRegistry.execute(name, context, input); }
   };
@@ -852,6 +955,8 @@ async function sendToRoom(session, ctx, message, options = {}) {
   const rawOutput = message;
   const preview = typeof rawOutput === 'string' ? rawOutput : String(rawOutput ?? '');
   logger.INFO('SEND', `准备发送: ${preview.substring(0, 50)}...`);
+
+  await waitForTypingDelay(options.outputOperation, session, options);
   
   try {
     // 方式1: session.send()
@@ -914,6 +1019,7 @@ const exported = {
   WorkflowRunLog,
   TriggerTemplateRegistry,
   PluginHost,
+  SkillCatalog,
   resolveModelProvider,
   resolveWorkflowPlanner
 };

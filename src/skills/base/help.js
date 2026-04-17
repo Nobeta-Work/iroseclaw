@@ -4,6 +4,7 @@
  */
 
 const { renderHelpOverview } = require('../../services/help/overview');
+const { withIiroseMarkdownPrefix } = require('../../utils/iirose-markdown');
 
 /**
  * 创建帮助技能
@@ -24,10 +25,10 @@ function createHelpSkill(skillManager) {
      * @returns {string} 格式化的帮助文本
      */
     handler: async ({ session, args }) => {
-      return renderHelpOverview({
+      return withIiroseMarkdownPrefix(renderHelpOverview({
         skills: skillManager.list(),
         tools: []
-      });
+      }));
     }
   };
 }

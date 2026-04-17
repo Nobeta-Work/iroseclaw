@@ -45,47 +45,18 @@
     "maxSteps": 6,
     "maxToolCallsPerStep": 4,
     "allowParallelReadTools": true,
+    "maxProviderRetries": 2,
     "promptProfile": {
-      "activeStyle": "plain",
+      "promptDir": "prompt",
+      "activePrompt": "女仆",
       "persist": true,
-      "stateFile": "data/runtime/workflow-prompt-profile.json",
-      "botProfile": {
-        "name": "IIROSE Claw",
-        "identity": "你在 IIROSE 聊天室中聊天。输出语言自然，去 AI 味，短句为主。",
-        "extraInstruction": ""
-      },
-      "styles": {
-        "plain": {
-          "label": "平淡",
-          "instruction": "语气自然、克制、直接，不刻意卖萌，不夸张，不撒娇。",
-          "aliases": [
-            "平淡",
-            "普通",
-            "plain",
-            "normal"
-          ]
-        },
-        "warm": {
-          "label": "热情",
-          "instruction": "语气积极、友好、带一点情绪温度，但保持专业和边界。",
-          "aliases": [
-            "热情",
-            "积极",
-            "warm",
-            "enthusiastic"
-          ]
-        },
-        "affectionate": {
-          "label": "爱慕",
-          "instruction": "语气温柔亲近、偏暧昧。",
-          "aliases": [
-            "爱慕",
-            "暧昧",
-            "affectionate",
-            "romantic"
-          ]
-        }
-      }
+      "stateFile": "data/runtime/workflow-prompt-profile.json"
+    },
+    "chatOutput": {
+      "enabled": true,
+      "splitDelimiter": "/",
+      "typingDelayPerCharMs": 300,
+      "maxTypingDelayMs": 5000
     }
   },
   "workflowRunLog": {
@@ -109,7 +80,7 @@
     "stateDirBase": "/tmp/iroseclaw-openclaw"
   },
   "providers": {
-    "default": "openclaw",
+    "default": "faramita",
     "named": {
       "analysis-http": {
         "type": "openai-compatible",
@@ -124,6 +95,17 @@
         "baseUrl": "https://api-inference.modelscope.cn/v1",
         "apiKey": "your_modelscope_api_key",
         "model": "Qwen/Qwen3-235B-A22B",
+        "extraBody": {
+          "enable_thinking": false
+        },
+        "timeout": 120000,
+        "enabled": true
+      },
+      "faramita": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.faramita.online/v1",
+        "apiKey": "sk-gP5UvV7ylRNwvV6nAcgS5MPMBxP8Jm62A124t02UwjIr0LiC",
+        "model": "free-chat",
         "extraBody": {
           "enable_thinking": false
         },
@@ -187,7 +169,7 @@
   },
   "pluginConfigs": {
     "iirose-admin-follow-room": {
-      "leaderUid": "your_admin_uid",
+      "leaderUid": "69ad815e0da8c",
       "onlyWhenLeavingCurrentRoom": false
     }
   },

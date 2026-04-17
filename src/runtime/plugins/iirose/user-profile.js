@@ -73,6 +73,25 @@ module.exports = {
           }
         })
       ],
+      skills: [
+        {
+          id: 'iirose.user-lookup',
+          name: '用户资料查询',
+          summary: '查询 IIROSE 用户基础信息、资料和关注列表。',
+          toolNames: [
+            'iirose.user.by_name',
+            'iirose.user.profile.by_name',
+            'iirose.user.follow_list',
+            'iirose.user.profile.self'
+          ],
+          tags: ['iirose', 'user', 'lookup'],
+          examples: ['查用户 Alice', '查资料 Bob'],
+          metadata: {
+            priority: 62,
+            pluginName: 'iirose-user-profile-tools'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'iirose-user-profile-tools'
       }

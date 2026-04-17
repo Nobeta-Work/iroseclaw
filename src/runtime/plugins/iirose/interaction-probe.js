@@ -294,6 +294,23 @@ module.exports = {
         createSendProbeTool(service),
         createRecentProbeTool(service)
       ],
+      skills: [
+        {
+          id: 'iirose.interaction-probe',
+          name: '交互探针',
+          summary: '发送并查看 IIROSE 交互探针，用于验证客户端回传行为。',
+          toolNames: [
+            'iirose.interaction.probe.send',
+            'iirose.interaction.probe.recent'
+          ],
+          tags: ['iirose', 'debug', 'interaction'],
+          examples: ['测试交互', '查看交互探针'],
+          metadata: {
+            priority: 30,
+            pluginName: 'iirose-interaction-probe'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'iirose-interaction-probe'
       },

@@ -792,6 +792,26 @@ module.exports = {
           }
         })
       ],
+      skills: [
+        {
+          id: 'proactive.topic-management',
+          name: '主动话题介入管理',
+          summary: '管理主动话题介入模式的开启、关闭、命名与状态。',
+          toolNames: [
+            'proactive.topic.enable',
+            'proactive.topic.disable',
+            'proactive.topic.status',
+            'proactive.topic.rename'
+          ],
+          tags: ['proactive', 'admin', 'moderation'],
+          adminOnly: true,
+          examples: ['开启主动模式', '命名主动模式 茶水间模式'],
+          metadata: {
+            priority: 55,
+            pluginName: 'proactive-topic-engagement'
+          }
+        }
+      ],
       triggerTemplates: [
         {
           kind: 'message.private',

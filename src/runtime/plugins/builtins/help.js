@@ -20,6 +20,20 @@ module.exports = {
           runtimeConfig: context.config || {}
         })
       ],
+      skills: [
+        {
+          id: 'assistant.help-overview',
+          name: '帮助概览',
+          summary: '展示当前机器人可见功能与快捷入口。',
+          toolNames: ['help.show'],
+          tags: ['assistant', 'help'],
+          examples: ['查看当前有哪些功能', '问机器人能做什么'],
+          metadata: {
+            priority: 100,
+            pluginName: 'builtin-help'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'builtin-help'
       }

@@ -14,36 +14,25 @@ const workflowPromptProfilePlugin = require('../src/runtime/plugins/builtins/wor
 const { compileWorkflowPrompt } = require('../src/runtime/workflow/prompt/compiler');
 
 async function main() {
-  const stateFile = path.join('data', 'runtime', `workflow-prompt-profile-test-${Date.now()}.json`);
+  const tempDir = path.join('data', 'runtime', `workflow-prompt-profile-test-${Date.now()}`);
+  const stateFile = path.join(tempDir, 'state.json');
+  const promptDir = path.join(tempDir, 'prompt');
+  fs.mkdirSync(promptDir, { recursive: true });
+  fs.writeFileSync(path.join(promptDir, 'IIC.md'), '# 全局前置\n始终保持像聊天室真人', 'utf8');
+  fs.writeFileSync(path.join(promptDir, '女仆.md'), '# 女仆设定\n你是 Noβ 的女仆', 'utf8');
+  fs.writeFileSync(path.join(promptDir, '猫娘.md'), '# 猫娘设定\n你说话会更俏皮一点', 'utf8');
+
   const host = new PluginHost({
     config: {
       admins: ['admin_uid'],
       workflow: {
         promptProfile: {
-          activeStyle: 'plain',
+          promptDir,
+          activePrompt: '女仆',
           persist: true,
           stateFile,
           botProfile: {
-            name: 'TestBot',
-            identity: '测试机器人',
-            extraInstruction: '优先简洁输出'
-          },
-          styles: {
-            plain: {
-              label: '平淡',
-              instruction: '平淡语气',
-              aliases: ['平淡', 'plain']
-            },
-            warm: {
-              label: '热情',
-              instruction: '热情语气',
-              aliases: ['热情', 'warm']
-            },
-            affectionate: {
-              label: '爱慕',
-              instruction: '爱慕语气',
-              aliases: ['爱慕', 'affectionate']
-            }
+            name: 'TestBot'
           }
         }
       }
@@ -61,29 +50,29 @@ async function main() {
 
   const setTool = host.toolRegistry.get('workflow.prompt.style.set');
   const statusTool = host.toolRegistry.get('workflow.prompt.style.status');
-  assert.equal(Boolean(setTool), true, 'plugin should register style set tool');
-  assert.equal(Boolean(statusTool), true, 'plugin should register style status tool');
+  assert.equal(Boolean(setTool), true, 'plugin should register set tool');
+  assert.equal(Boolean(statusTool), true, 'plugin should register status tool');
 
   const denied = await setTool.execute({
     session: {
       userId: 'normal_uid',
-      content: '切换风格 热情'
+      content: '切换提示词 猫娘'
     }
   }, {
-    query: '热情'
+    query: '猫娘'
   });
   assert.equal(denied.ok, false, 'non-admin should be denied');
 
   const switched = await setTool.execute({
     session: {
       userId: 'admin_uid',
-      content: '切换风格 热情'
+      content: '切换提示词 猫娘'
     }
   }, {
-    query: '热情'
+    query: '猫娘'
   });
-  assert.equal(switched.ok, true, 'admin should be able to switch style');
-  assert.equal(service.getActiveStyle(), 'warm', 'service should switch to warm style');
+  assert.equal(switched.ok, true, 'admin should be able to switch prompt');
+  assert.equal(service.getActivePrompt(), '猫娘', 'service should switch to selected prompt file');
 
   const status = await statusTool.execute({
     session: {
@@ -91,7 +80,8 @@ async function main() {
     }
   }, {});
   assert.equal(status.ok, true, 'admin should read status');
-  assert.equal(String(status.result).includes('热情'), true, 'status should include active style label');
+  assert.equal(String(status.result).includes('IIC'), true, 'status should include global prompt');
+  assert.equal(String(status.result).includes('猫娘'), true, 'status should include current prompt');
 
   const compiled = compileWorkflowPrompt({
     trigger: { kind: 'message.mentioned' },
@@ -109,14 +99,39 @@ async function main() {
     }
   });
 
-  assert.equal(compiled.prompt.includes('当前回复风格: 热情'), true, 'prompt should reflect runtime-selected style');
-  assert.equal(compiled.prompt.includes('身份: 测试机器人'), true, 'prompt should include configured bot identity');
-  assert.equal(compiled.prompt.includes('额外要求: 优先简洁输出'), true, 'prompt should include extra instruction');
+  assert.equal(compiled.prompt.includes('当前常态 prompt: 猫娘'), true, 'prompt should reflect runtime-selected prompt');
+  assert.equal(compiled.prompt.includes('始终保持像聊天室真人'), true, 'prompt should include global prompt content');
+  assert.equal(compiled.prompt.includes('你说话会更俏皮一点'), true, 'prompt should include selected prompt content');
 
-  if (fs.existsSync(path.resolve(process.cwd(), stateFile))) {
-    fs.unlinkSync(path.resolve(process.cwd(), stateFile));
-  }
+  fs.writeFileSync(path.join(promptDir, '猫娘.md'), '# 猫娘设定\n热更新后的内容', 'utf8');
+  const recompiled = compileWorkflowPrompt({
+    trigger: { kind: 'message.mentioned' },
+    protocolRequest: {
+      permission: {
+        isAdmin: true,
+        isSystemRequest: false
+      }
+    }
+  }, {
+    promptProfileService: service,
+    meme: {
+      enabled: false,
+      requestEmotionTag: false
+    }
+  });
+  assert.equal(recompiled.prompt.includes('热更新后的内容'), true, 'prompt compilation should hot reload file content');
 
+  const globalOnly = await setTool.execute({
+    session: {
+      userId: 'admin_uid',
+      content: '切换提示词 IIC'
+    }
+  }, {
+    query: 'IIC'
+  });
+  assert.equal(globalOnly.ok, false, 'global prompt should not be selectable as active prompt');
+
+  fs.rmSync(tempDir, { recursive: true, force: true });
   console.log('✅ PASS: workflow prompt profile regression');
 }
 
