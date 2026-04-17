@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { parsePersonaMemoryBlock } = require('../../prompt-memory/service');
 
 const DEFAULT_PROMPT_DIR = 'prompt';
 const GLOBAL_PROMPT_BASENAME = 'IIC';
@@ -61,6 +62,7 @@ function createPromptFileRecord(fileName, filePath) {
   if (!content) {
     return null;
   }
+  const memoryBlock = parsePersonaMemoryBlock(content);
 
   const aliases = Array.from(new Set([
     key,
@@ -78,6 +80,8 @@ function createPromptFileRecord(fileName, filePath) {
     path: filePath,
     isGlobal: key.toLowerCase() === GLOBAL_PROMPT_BASENAME.toLowerCase(),
     content,
+    memoryText: memoryBlock.memoryText || '',
+    memoryEntries: Array.isArray(memoryBlock.entries) ? memoryBlock.entries : [],
     aliases
   };
 }
@@ -188,6 +192,8 @@ function resolveFilePromptSnapshot(config = {}, state = {}, logger = console) {
     activePromptFile: clonePromptFileMeta(activePromptFile),
     availablePromptFiles: selectableFiles.map(clonePromptFileMeta),
     promptFiles: files.map(clonePromptFileMeta),
+    memoryText: activePromptFile.memoryText || '',
+    memoryEntries: Array.isArray(activePromptFile.memoryEntries) ? activePromptFile.memoryEntries : [],
     promptText
   };
 }
@@ -221,6 +227,8 @@ function resolveLegacyPromptSnapshot(config = {}, state = {}) {
     activePromptFile: null,
     availablePromptFiles: [],
     promptFiles: [],
+    memoryText: '',
+    memoryEntries: [],
     promptText: '',
     styles: Object.fromEntries(Object.entries(styles).map(([key, value]) => [key, {
       label: value.label,
@@ -358,6 +366,7 @@ function createPromptProfileService(config = {}, logger = console) {
         `- prompt 目录: ${snapshot.promptDir}`,
         `- 当前常态 prompt: ${snapshot.styleLabel || snapshot.activePrompt || '未设置'}`,
         `- 全局前置 prompt: ${snapshot.globalPrompt?.label || '未配置'}`,
+        `- 长期记忆条数: ${Array.isArray(snapshot.memoryEntries) ? snapshot.memoryEntries.length : 0}`,
         `- 文件列表: ${fileLabels.join(' / ') || '无'}`
       ];
 

@@ -50,7 +50,10 @@
       "promptDir": "prompt",
       "activePrompt": "女仆",
       "persist": true,
-      "stateFile": "data/runtime/workflow-prompt-profile.json"
+      "stateFile": "data/runtime/workflow-prompt-profile.json",
+      "memory": {
+        "maxEntries": 50
+      }
     },
     "chatOutput": {
       "enabled": true,

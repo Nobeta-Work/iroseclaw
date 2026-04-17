@@ -19,6 +19,8 @@ const DEFAULT_PROMPT_PROFILE = {
   activePromptFile: null,
   availablePromptFiles: [],
   promptFiles: [],
+  memoryText: '',
+  memoryEntries: [],
   promptText: '',
   styles: {
     plain: {
@@ -72,6 +74,8 @@ function normalizePromptProfileSnapshot(profile = {}) {
     promptFiles: Array.isArray(input.promptFiles)
       ? input.promptFiles.map(normalizePromptFileMeta).filter(Boolean)
       : [],
+    memoryText: typeof input.memoryText === 'string' ? input.memoryText.trim() : '',
+    memoryEntries: Array.isArray(input.memoryEntries) ? input.memoryEntries : [],
     promptText: typeof input.promptText === 'string' ? input.promptText.trim() : '',
     styles
   };

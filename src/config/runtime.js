@@ -74,6 +74,9 @@ const DEFAULT_CONFIG = {
         identity: '你是一个在 IIROSE 房间中协助聊天与工具编排的机器人助手。',
         extraInstruction: ''
       },
+      memory: {
+        maxEntries: 50
+      },
       styles: {
         plain: {
           label: '平淡',
@@ -449,6 +452,14 @@ function normalizeConfig(config) {
   if (!normalized.workflow.promptProfile.styles[normalized.workflow.promptProfile.activeStyle]) {
     normalized.workflow.promptProfile.activeStyle = DEFAULT_CONFIG.workflow.promptProfile.activeStyle;
   }
+  normalized.workflow.promptProfile.memory =
+    normalized.workflow.promptProfile.memory && typeof normalized.workflow.promptProfile.memory === 'object' && !Array.isArray(normalized.workflow.promptProfile.memory)
+      ? { ...normalized.workflow.promptProfile.memory }
+      : {};
+  normalized.workflow.promptProfile.memory.maxEntries = Math.max(
+    1,
+    parseInteger(normalized.workflow.promptProfile.memory.maxEntries, DEFAULT_CONFIG.workflow.promptProfile.memory.maxEntries)
+  );
   normalized.workflow.chatOutput =
     normalized.workflow.chatOutput && typeof normalized.workflow.chatOutput === 'object' && !Array.isArray(normalized.workflow.chatOutput)
       ? { ...normalized.workflow.chatOutput }

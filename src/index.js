@@ -26,6 +26,7 @@ const memeOutputPlugin = require('./runtime/plugins/builtins/meme-output');
 const iiroseMarkdownOutputPlugin = require('./runtime/plugins/builtins/iirose-markdown-output');
 const legacySkillBridgePlugin = require('./runtime/plugins/builtins/legacy-skill-bridge');
 const messagingToolsPlugin = require('./runtime/plugins/builtins/messaging-tools');
+const promptMemoryPlugin = require('./runtime/plugins/builtins/prompt-memory');
 const openclawProviderPlugin = require('./runtime/plugins/builtins/openclaw-provider');
 const openaiCompatibleProvidersPlugin = require('./runtime/plugins/builtins/openai-compatible-providers');
 const workflowPromptProfilePlugin = require('./runtime/plugins/builtins/workflow-prompt-profile');
@@ -466,6 +467,7 @@ function apply(ctx, config = {}) {
   pluginHost.registerPlugin(openclawProviderPlugin);
   pluginHost.registerPlugin(openaiCompatibleProvidersPlugin);
   pluginHost.registerPlugin(workflowPromptProfilePlugin);
+  pluginHost.registerPlugin(promptMemoryPlugin);
   pluginHost.registerPlugin(workflowPlannersPlugin);
   if (requiresLegacyAdapter(finalConfig)) {
     pluginHost.registerPlugin(legacyOpenClawCompatPlugin);
@@ -475,6 +477,10 @@ function apply(ctx, config = {}) {
     ctx,
     host: pluginHost
   });
+  const promptMemoryService = pluginHost.getService('workflow.persona-memory') || null;
+  if (promptMemoryService && typeof promptMemoryService.setProvider === 'function') {
+    promptMemoryService.setProvider(modelProvider);
+  }
   const directReplyAgent = createDirectReplyAgent({
     provider: modelProvider,
     logger,
@@ -717,6 +723,9 @@ function apply(ctx, config = {}) {
           triggerKind: trigger.kind,
           isAdmin: trigger.isAdminSender === true
         });
+        const promptProfileService = pluginHost.getService('workflow.prompt-profile') || null;
+        const promptProfileSnapshot = promptProfileService?.resolveProfile?.() || null;
+        const promptMemoryService = pluginHost.getService('workflow.persona-memory') || null;
         const messageResult = runtimeMode === 'hybrid'
           ? await handleHybridMentionMessage({
               trigger,
@@ -732,6 +741,9 @@ function apply(ctx, config = {}) {
               template,
               availableTools,
               visibleSkills,
+              promptProfileService,
+              promptProfileSnapshot,
+              promptMemoryService,
               legacyChatHandler: async () => getLegacyMessageHandler()({
                 sourceSession: session,
                 userId,
@@ -765,6 +777,9 @@ function apply(ctx, config = {}) {
               availableTools,
               visibleSkills,
               template,
+              promptProfileService,
+              promptProfileSnapshot,
+              promptMemoryService,
               runtimeConfig: finalConfig
             });
 

@@ -39,6 +39,7 @@ const testFiles = [
   'trigger-template-test.js',
   'chat-like-output-test.js',
   'workflow-prompt-profile-test.js',
+  'prompt-persona-memory-test.js',
   'workflow-provider-silent-failure-test.js',
   'proactive-topic-engagement-test.js',
   'remote-room-monitoring-test.js',

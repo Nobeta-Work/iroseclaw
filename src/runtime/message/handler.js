@@ -43,6 +43,75 @@ async function sendReplyThroughRuntime(outputRuntime, executionContext, text, op
   }, executionContext);
 }
 
+function extractWorkflowReplyText(workflowResult = {}) {
+  const directResult = workflowResult?.outputResult || null;
+  const finalResults = Array.isArray(workflowResult?.finalOutputResults) ? workflowResult.finalOutputResults : [];
+  const candidates = [];
+
+  if (directResult) {
+    candidates.push(directResult);
+  }
+  candidates.push(...finalResults);
+
+  const texts = [];
+  for (const item of candidates) {
+    const operation = item?.operation || {};
+    if (operation.kind !== 'reply.current') {
+      continue;
+    }
+    const text = typeof operation.metadata?.recordText === 'string' && operation.metadata.recordText.trim()
+      ? operation.metadata.recordText.trim()
+      : (typeof operation.content?.text === 'string' ? operation.content.text.trim() : '');
+    if (text) {
+      texts.push(text);
+    }
+  }
+
+  return texts.join('\n').trim();
+}
+
+function schedulePersonaMemoryWriteback(options = {}, payload = {}) {
+  const promptMemoryService = options.promptMemoryService || null;
+  if (!promptMemoryService || typeof promptMemoryService.recordRound !== 'function') {
+    return null;
+  }
+
+  const promptProfileSnapshot = options.promptProfileSnapshot || options.promptProfileService?.resolveProfile?.() || null;
+  const promptKey = String(payload.promptKey || promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '').trim();
+  if (!promptKey) {
+    return null;
+  }
+
+  const replyText = typeof payload.replyText === 'string' ? payload.replyText.trim() : '';
+  if (!replyText) {
+    return null;
+  }
+
+  const trigger = options.trigger || {};
+  const session = options.session || {};
+  const timestamp = Number.isFinite(Number(payload.timestamp))
+    ? Math.floor(Number(payload.timestamp))
+    : (Number.isFinite(Number(trigger.timestamp)) ? Math.floor(Number(trigger.timestamp)) : Date.now());
+
+  return promptMemoryService.recordRound({
+    promptKey,
+    promptLabel: payload.promptLabel || promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+    sourceMode: payload.sourceMode || '',
+    triggerKind: payload.triggerKind || trigger.kind || '',
+    sourceScope: payload.sourceScope || (trigger.isPrivateSession === true ? 'private' : 'public'),
+    channelId: payload.channelId || trigger.channelId || session.channelId || session.chatId || '',
+    userId: payload.userId || trigger.userId || session.userId || '',
+    username: payload.username || trigger.username || session.username || '',
+    currentMessage: payload.currentMessage || trigger.cleanedContent || trigger.rawContent || '',
+    replyText,
+    roundId: payload.roundId || trigger.messageId || session.messageId || '',
+    timestamp
+  }).catch((error) => {
+    (options.logger || console).warn?.(`[workflow.persona-memory] failed to write back memory: ${error.message}`);
+    return null;
+  });
+}
+
 function isSilentWorkflowFailureReason(reason = '') {
   const normalized = String(reason || '').trim().toLowerCase();
   if (!normalized) {
@@ -250,6 +319,7 @@ async function invokeWorkflowChat(options = {}) {
   } = options;
   const template = options.template || null;
   const executionContext = buildExecutionContext(options);
+  const promptProfileSnapshot = options.promptProfileSnapshot || options.promptProfileService?.resolveProfile?.() || null;
   const directToolCall = resolveDirectToolCall(options, executionContext);
 
   if (directToolCall) {
@@ -289,6 +359,23 @@ async function invokeWorkflowChat(options = {}) {
   if (directReplyAgentCall) {
     const directReplyResult = await directReplyAgentCall();
     if (directReplyResult) {
+      void schedulePersonaMemoryWriteback({
+        ...options,
+        promptProfileSnapshot
+      }, {
+        sourceMode: 'direct-agent',
+        triggerKind: trigger.kind,
+        promptKey: promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '',
+        promptLabel: promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+        replyText: directReplyResult.replyText,
+        currentMessage: trigger.cleanedContent || trigger.rawContent || '',
+        channelId: trigger.channelId || session.channelId || '',
+        userId: trigger.userId || session.userId || '',
+        username: trigger.username || session.username || '',
+        sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+        timestamp: trigger.timestamp || Date.now(),
+        roundId: trigger.messageId || session.messageId || ''
+      });
       return directReplyResult;
     }
   }
@@ -324,6 +411,29 @@ async function invokeWorkflowChat(options = {}) {
     }
   );
 
+  if (workflowResult?.decision?.status === 'final') {
+    const replyText = extractWorkflowReplyText(workflowResult);
+    if (replyText) {
+      void schedulePersonaMemoryWriteback({
+        ...options,
+        promptProfileSnapshot
+      }, {
+        sourceMode: 'workflow-chat',
+        triggerKind: trigger.kind,
+        promptKey: promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '',
+        promptLabel: promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+        replyText,
+        currentMessage: trigger.cleanedContent || trigger.rawContent || '',
+        channelId: trigger.channelId || session.channelId || '',
+        userId: trigger.userId || session.userId || '',
+        username: trigger.username || session.username || '',
+        sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+        timestamp: trigger.timestamp || Date.now(),
+        roundId: trigger.messageId || session.messageId || ''
+      });
+    }
+  }
+
   return {
     mode: options.resultMode || 'workflow-chat',
     workflowResult
@@ -348,6 +458,7 @@ async function handleHybridMentionMessage(options = {}) {
     legacyChatHandler
   } = options;
   const executionContext = buildExecutionContext(options);
+  const promptProfileSnapshot = options.promptProfileSnapshot || options.promptProfileService?.resolveProfile?.() || null;
   const directToolCall = resolveDirectToolCall(options, executionContext);
 
   if (directToolCall) {
@@ -366,6 +477,23 @@ async function handleHybridMentionMessage(options = {}) {
     await sendReplyThroughRuntime(outputRuntime, executionContext, replyTextRaw, {
       useMemePipeline: true
     });
+    void schedulePersonaMemoryWriteback({
+      ...options,
+      promptProfileSnapshot
+    }, {
+      sourceMode: 'hybrid-chat',
+      triggerKind: trigger.kind,
+      promptKey: promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '',
+      promptLabel: promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+      replyText: replyTextRaw,
+      currentMessage: trigger.cleanedContent || trigger.rawContent || '',
+      channelId: trigger.channelId || session.channelId || '',
+      userId: trigger.userId || session.userId || '',
+      username: trigger.username || session.username || '',
+      sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+      timestamp: trigger.timestamp || Date.now(),
+      roundId: trigger.messageId || session.messageId || ''
+    });
     return {
       mode: 'hybrid-chat',
       replyText: replyTextRaw
@@ -383,6 +511,8 @@ module.exports = {
   isSilentWorkflowFailureReason,
   shouldSuppressWorkflowFallback,
   sendReplyThroughRuntime,
+  extractWorkflowReplyText,
+  schedulePersonaMemoryWriteback,
   buildExecutionContext,
   resolveConversationContext,
   resolveDirectToolCall,
