@@ -53,10 +53,11 @@ function extractWorkflowReplyText(workflowResult = {}) {
   }
   candidates.push(...finalResults);
 
+  const recordableKinds = new Set(['reply.current', 'message.route']);
   const texts = [];
   for (const item of candidates) {
     const operation = item?.operation || {};
-    if (operation.kind !== 'reply.current') {
+    if (!recordableKinds.has(operation.kind)) {
       continue;
     }
     const text = typeof operation.metadata?.recordText === 'string' && operation.metadata.recordText.trim()

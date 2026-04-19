@@ -45,6 +45,10 @@ module.exports = {
   INFO: (tag, ...args) => log(LOG_LEVELS.INFO, 'INFO', tag, ...args),
   WARN: (tag, ...args) => log(LOG_LEVELS.WARN, 'WARN', tag, ...args),
   ERROR: (tag, ...args) => log(LOG_LEVELS.ERROR, 'ERROR', tag, ...args),
+  debug: (...args) => log(LOG_LEVELS.DEBUG, 'DEBUG', '', ...args),
+  info: (...args) => log(LOG_LEVELS.INFO, 'INFO', '', ...args),
+  warn: (...args) => log(LOG_LEVELS.WARN, 'WARN', '', ...args),
+  error: (...args) => log(LOG_LEVELS.ERROR, 'ERROR', '', ...args),
   
   // 获取当前日志级别
   getLevel: () => CURRENT_LEVEL,

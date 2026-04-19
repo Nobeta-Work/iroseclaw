@@ -65,7 +65,7 @@ const DEFAULT_CONFIG = {
     maxProviderRetries: 2,
     promptProfile: {
       promptDir: 'prompt',
-      activePrompt: '',
+      activePrompt: '角色',
       activeStyle: 'plain',
       persist: true,
       stateFile: 'data/runtime/workflow-prompt-profile.json',

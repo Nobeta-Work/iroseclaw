@@ -383,7 +383,24 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
     const nonJsonReply = this._getDecisionText(lastResult).trim();
     if (nonJsonReply && !looksLikeProviderErrorText(nonJsonReply)) {
       this.logger.warn?.('[LlmWorkflowPlanner] decision parse fallback to direct final reply');
-      return this._buildDirectReplyDecision(nonJsonReply, input, providerName || fallbackProviderName, 'decision_parse_fallback');
+      const fallbackReply = await this._attemptDirectReplyFallback(
+        input,
+        providerName || fallbackProviderName,
+        'decision_parse_fallback'
+      );
+      if (fallbackReply.ok && fallbackReply.decision) {
+        return fallbackReply.decision;
+      }
+
+      return normalizeWorkflowStepDecision({
+        status: 'error',
+        audit: {
+          reason: 'invalid workflow decision: decision parse fallback failed',
+          blocked: false,
+          planner: this.label,
+          provider: fallbackReply.providerName || providerName || fallbackProviderName
+        }
+      });
     }
 
     const reason = lastFailureReason || (

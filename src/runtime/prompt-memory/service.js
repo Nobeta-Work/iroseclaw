@@ -40,18 +40,9 @@ function normalizeImportance(value, fallback = 5) {
 }
 
 function normalizeIsoTime(value, fallback = new Date().toISOString()) {
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = new Date(value.trim());
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
-  }
-
-  if (Number.isFinite(Number(value))) {
-    const parsed = new Date(Number(value));
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
+  const timestamp = normalizeTimestampMs(value, NaN);
+  if (Number.isFinite(timestamp)) {
+    return new Date(timestamp).toISOString();
   }
 
   const parsedFallback = new Date(fallback);
@@ -110,13 +101,87 @@ function normalizeMemoryEntries(entries = [], options = {}) {
   }
 
   return Array.from(seen.values()).sort((left, right) => {
-    const leftTime = new Date(left.createdAt || left.time || 0).getTime();
-    const rightTime = new Date(right.createdAt || right.time || 0).getTime();
+    const leftTime = normalizeTimestampMs(left.createdAt || left.time || 0, 0);
+    const rightTime = normalizeTimestampMs(right.createdAt || right.time || 0, 0);
     if (leftTime !== rightTime) {
       return leftTime - rightTime;
     }
     return left.id.localeCompare(right.id);
   });
+}
+
+function normalizeTimestampMs(value, fallback = Date.now()) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (text) {
+    if (/^-?\d+(?:\.\d+)?$/.test(text)) {
+      const numeric = Number(text);
+      if (Number.isFinite(numeric)) {
+        return numeric > 0 && numeric < 1e11 ? Math.floor(numeric * 1000) : Math.floor(numeric);
+      }
+    }
+
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.getTime();
+    }
+  }
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric > 0 && numeric < 1e11 ? Math.floor(numeric * 1000) : Math.floor(numeric);
+  }
+
+  const fallbackNumeric = Number(fallback);
+  if (Number.isFinite(fallbackNumeric)) {
+    return Math.floor(fallbackNumeric);
+  }
+
+  return Number.NaN;
+}
+
+function comparePendingRounds(left = {}, right = {}) {
+  const leftTime = normalizeTimestampMs(left.timestamp, 0);
+  const rightTime = normalizeTimestampMs(right.timestamp, 0);
+  if (leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+
+  const leftCreatedAt = normalizeText(left.createdAt, 80);
+  const rightCreatedAt = normalizeText(right.createdAt, 80);
+  if (leftCreatedAt !== rightCreatedAt) {
+    return leftCreatedAt.localeCompare(rightCreatedAt);
+  }
+
+  return normalizeText(left.roundId, 160).localeCompare(normalizeText(right.roundId, 160));
+}
+
+function selectSummaryBatch(rounds = [], batchSize = SUMMARY_THRESHOLD_ROUNDS, thresholdAgeMs = SUMMARY_THRESHOLD_AGE_MS, nowMs = Date.now()) {
+  const ordered = Array.isArray(rounds)
+    ? [...rounds].sort(comparePendingRounds)
+    : [];
+
+  if (ordered.length < batchSize) {
+    return {
+      ok: false,
+      reason: 'pending rounds below threshold',
+      rounds: []
+    };
+  }
+
+  const oldestTimestamp = normalizeTimestampMs(ordered[0]?.timestamp, nowMs);
+  if (nowMs - oldestTimestamp < thresholdAgeMs) {
+    return {
+      ok: false,
+      reason: 'oldest pending round is too recent',
+      rounds: []
+    };
+  }
+
+  return {
+    ok: true,
+    reason: '',
+    rounds: ordered.slice(0, batchSize)
+  };
 }
 
 function escapeRegex(text = '') {
@@ -467,52 +532,42 @@ function parseJsonLikeText(raw = '') {
   return null;
 }
 
-function getProviderText(result = {}) {
-  if (result && typeof result.json === 'object' && result.json) {
+function parseProviderEntries(result = {}) {
+  if (Array.isArray(result?.json)) {
     return result.json;
   }
 
-  const candidates = [
-    result?.jsonText,
-    result?.text,
-    result?.plainText
-  ];
+  if (result?.json && typeof result.json === 'object' && Array.isArray(result.json.entries)) {
+    return result.json.entries;
+  }
+
+  const candidates = [];
+  if (typeof result?.json === 'string' && result.json.trim()) {
+    candidates.push(result.json.trim());
+  }
+  if (typeof result?.jsonText === 'string' && result.jsonText.trim()) {
+    candidates.push(result.jsonText.trim());
+  }
+  if (typeof result?.text === 'string' && result.text.trim()) {
+    candidates.push(result.text.trim());
+  }
+  if (typeof result?.plainText === 'string' && result.plainText.trim()) {
+    candidates.push(result.plainText.trim());
+  }
 
   for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim();
+    const parsed = parseJsonLikeText(candidate);
+    if (!parsed) {
+      continue;
     }
-  }
 
-  return null;
-}
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
 
-function parseProviderEntries(result = {}) {
-  const raw = getProviderText(result);
-  if (!raw) {
-    return [];
-  }
-
-  if (Array.isArray(raw)) {
-    return raw;
-  }
-
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    const entries = Array.isArray(raw.entries) ? raw.entries : [];
-    return entries;
-  }
-
-  const parsed = parseJsonLikeText(String(raw));
-  if (!parsed) {
-    return [];
-  }
-
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  if (Array.isArray(parsed.entries)) {
-    return parsed.entries;
+    if (Array.isArray(parsed.entries)) {
+      return parsed.entries;
+    }
   }
 
   return [];
@@ -718,7 +773,7 @@ function createPersonaMemoryService(config = {}, logger = console) {
       return null;
     }
 
-    const timestamp = normalizePositiveInt(input.timestamp, now(), 0);
+    const timestamp = normalizeTimestampMs(input.timestamp ?? input.createdAt ?? input.time ?? now(), now());
     const currentMessage = normalizeLineText(input.currentMessage || input.userMessage || input.message || input.cleanedContent, 800);
     const replyText = normalizeLineText(input.replyText || input.responseText || input.botReply, 800);
     const sourceMode = normalizeText(input.sourceMode || input.mode || '', 80);
@@ -731,7 +786,7 @@ function createPersonaMemoryService(config = {}, logger = console) {
     return {
       roundId: normalizeText(input.roundId || input.messageId || input.eventId || input.requestId || generateMemoryId('round'), 160),
       timestamp,
-      createdAt: normalizeIsoTime(input.createdAt || timestamp),
+      createdAt: normalizeIsoTime(timestamp, timestamp),
       sourceMode,
       triggerKind,
       sourceScope,
@@ -770,37 +825,6 @@ function createPersonaMemoryService(config = {}, logger = console) {
     };
   }
 
-  function shouldSummarize(state = {}) {
-    const rounds = Array.isArray(state.pendingRounds) ? state.pendingRounds : [];
-    if (rounds.length < summaryThresholdRounds) {
-      return {
-        ok: false,
-        reason: 'pending rounds below threshold'
-      };
-    }
-
-    const oldestTimestamp = rounds.reduce((min, round) => {
-      const ts = normalizePositiveInt(round?.timestamp, now(), 0);
-      return Math.min(min, ts);
-    }, Number.POSITIVE_INFINITY);
-
-    if (!Number.isFinite(oldestTimestamp)) {
-      return {
-        ok: false,
-        reason: 'pending rounds missing timestamp'
-      };
-    }
-
-    if (now() - oldestTimestamp < summaryThresholdAgeMs) {
-      return {
-        ok: false,
-        reason: 'oldest pending round is too recent'
-      };
-    }
-
-    return { ok: true };
-  }
-
   async function summarizeLocked(state = {}) {
     if (!state.promptKey) {
       return {
@@ -810,14 +834,16 @@ function createPersonaMemoryService(config = {}, logger = console) {
       };
     }
 
-    const gate = shouldSummarize(state);
-    if (!gate.ok) {
+    const summaryBatch = selectSummaryBatch(state.pendingRounds, summaryThresholdRounds, summaryThresholdAgeMs, now());
+    if (!summaryBatch.ok) {
       return {
         ok: true,
         changed: false,
-        reason: gate.reason
+        reason: summaryBatch.reason
       };
     }
+
+    const summaryRounds = summaryBatch.rounds;
 
     if (!provider || typeof provider.complete !== 'function') {
       logger.warn?.(`[workflow.persona-memory] provider unavailable, skip summary for ${state.promptKey}`);
@@ -828,7 +854,10 @@ function createPersonaMemoryService(config = {}, logger = console) {
       };
     }
 
-    const summaryPrompt = buildSummaryPrompt(buildSummaryContext(state));
+    const summaryPrompt = buildSummaryPrompt(buildSummaryContext({
+      ...state,
+      pendingRounds: summaryRounds
+    }));
     const result = await provider.complete({
       message: summaryPrompt,
       timeoutMs,
@@ -836,7 +865,7 @@ function createPersonaMemoryService(config = {}, logger = console) {
     });
     const entries = parseProviderEntries(result);
     const normalized = normalizeMemoryEntries(entries, {
-      defaultSourceRoundCount: Array.isArray(state.pendingRounds) ? state.pendingRounds.length : 0
+      defaultSourceRoundCount: summaryRounds.length
     });
 
     if (!Array.isArray(normalized) || normalized.length === 0) {
@@ -849,7 +878,10 @@ function createPersonaMemoryService(config = {}, logger = console) {
     }
 
     state.entries = normalizeMemoryEntries([...(state.entries || []), ...normalized], {});
-    state.pendingRounds = [];
+    const selectedRounds = new Set(summaryRounds);
+    state.pendingRounds = Array.isArray(state.pendingRounds)
+      ? state.pendingRounds.filter(round => !selectedRounds.has(round))
+      : [];
     state.updatedAt = normalizeIsoTime(now());
     return {
       ok: true,
@@ -897,8 +929,8 @@ function createPersonaMemoryService(config = {}, logger = console) {
           return leftImportance - rightImportance;
         }
 
-        const leftTime = new Date(left.createdAt || left.time || 0).getTime();
-        const rightTime = new Date(right.createdAt || right.time || 0).getTime();
+        const leftTime = normalizeTimestampMs(left.createdAt || left.time || 0, 0);
+        const rightTime = normalizeTimestampMs(right.createdAt || right.time || 0, 0);
         if (leftTime !== rightTime) {
           return leftTime - rightTime;
         }

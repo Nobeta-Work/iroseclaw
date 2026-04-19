@@ -13,6 +13,7 @@ module.exports = {
       ? promptProfileConfig.memory
       : {};
 
+    const defaultProvider = host.getService('provider.default') || null;
     const service = createPersonaMemoryService({
       enabled: memoryConfig.enabled !== false,
       persist: memoryConfig.persist !== false,
@@ -24,7 +25,7 @@ module.exports = {
       compressionTargetCount: memoryConfig.compressionTargetCount,
       timeoutMs: memoryConfig.timeoutMs,
       promptProfileService,
-      provider: memoryConfig.provider || null,
+      provider: memoryConfig.provider || defaultProvider || null,
       now: typeof memoryConfig.now === 'function' ? memoryConfig.now : null
     }, context.logger || host.logger || console);
 
