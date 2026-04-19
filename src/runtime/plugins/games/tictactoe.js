@@ -1156,6 +1156,27 @@ module.exports = {
         createRestartTool(service),
         createQuitTool(service)
       ],
+      skills: [
+        {
+          id: 'games.tictactoe',
+          name: '井字棋',
+          summary: '发起、加入并管理井字棋对局。',
+          toolNames: [
+            'games.tictactoe.start',
+            'games.tictactoe.join',
+            'games.tictactoe.status',
+            'games.tictactoe.rules',
+            'games.tictactoe.restart',
+            'games.tictactoe.quit'
+          ],
+          tags: ['games', 'tictactoe'],
+          examples: ['井字棋', '加入井字棋'],
+          metadata: {
+            priority: 75,
+            pluginName: 'games-tictactoe'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'games-tictactoe',
         description: '无需 LLM 的准交互井字棋'

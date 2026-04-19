@@ -1,16 +1,16 @@
 {
   "bot": {
-    "uid": "your_bot_uid",
-    "name": "YourBotName",
+    "uid": "YOUR_BOT_UID",
+    "name": "Yesα",
     "platform": "iirose"
   },
-  "roomId": "your_room_id",
+  "roomId": "YOUR_ROOM_ID",
   "auth": {
-    "iiroseUsername": "your_bot_username",
-    "iirosePassword": "your_bot_password"
+    "iiroseUsername": "YOUR_IIROSE_USERNAME",
+    "iirosePassword": "YOUR_IIROSE_PASSWORD"
   },
   "admins": [
-    "your_admin_uid"
+    "YOUR_ADMIN_UID"
   ],
   "permissions": {
     "default": {
@@ -32,7 +32,8 @@
         "music",
         "admin",
         "system",
-        "config"
+        "config",
+        "message.route"
       ],
       "blockedActions": []
     }
@@ -45,47 +46,21 @@
     "maxSteps": 6,
     "maxToolCallsPerStep": 4,
     "allowParallelReadTools": true,
+    "maxProviderRetries": 2,
     "promptProfile": {
-      "activeStyle": "plain",
+      "promptDir": "prompt",
+      "activePrompt": "角色",
       "persist": true,
       "stateFile": "data/runtime/workflow-prompt-profile.json",
-      "botProfile": {
-        "name": "IIROSE Claw",
-        "identity": "你在 IIROSE 聊天室中聊天。输出语言自然，去 AI 味，短句为主。",
-        "extraInstruction": ""
-      },
-      "styles": {
-        "plain": {
-          "label": "平淡",
-          "instruction": "语气自然、克制、直接，不刻意卖萌，不夸张，不撒娇。",
-          "aliases": [
-            "平淡",
-            "普通",
-            "plain",
-            "normal"
-          ]
-        },
-        "warm": {
-          "label": "热情",
-          "instruction": "语气积极、友好、带一点情绪温度，但保持专业和边界。",
-          "aliases": [
-            "热情",
-            "积极",
-            "warm",
-            "enthusiastic"
-          ]
-        },
-        "affectionate": {
-          "label": "爱慕",
-          "instruction": "语气温柔亲近、偏暧昧。",
-          "aliases": [
-            "爱慕",
-            "暧昧",
-            "affectionate",
-            "romantic"
-          ]
-        }
+      "memory": {
+        "maxEntries": 50
       }
+    },
+    "chatOutput": {
+      "enabled": true,
+      "splitDelimiter": "/",
+      "typingDelayPerCharMs": 300,
+      "maxTypingDelayMs": 5000
     }
   },
   "workflowRunLog": {
@@ -94,7 +69,7 @@
     "fileName": "workflow-runs.jsonl",
     "maxBytes": 8388608,
     "targetBytesAfterCompact": 6291456,
-    "compactCheckInterval": 20,
+    "compactCheckInterval": 10,
     "persist": true
   },
   "openclaw": {
@@ -109,21 +84,21 @@
     "stateDirBase": "/tmp/iroseclaw-openclaw"
   },
   "providers": {
-    "default": "openclaw",
+    "default": "default",
     "named": {
-      "analysis-http": {
+      "default": {
         "type": "openai-compatible",
         "baseUrl": "https://api.example.com/v1",
-        "apiKey": "your_api_key",
-        "model": "gpt-4.1-mini",
+        "apiKey": "YOUR_API_KEY",
+        "model": "deepseek-v3.2",
         "timeout": 30000,
         "enabled": false
       },
-      "modelscope-qwen3-235b": {
+      "faramita": {
         "type": "openai-compatible",
-        "baseUrl": "https://api-inference.modelscope.cn/v1",
-        "apiKey": "your_modelscope_api_key",
-        "model": "Qwen/Qwen3-235B-A22B",
+        "baseUrl": "https://api.faramita.online/v1",
+        "apiKey": "YOUR_FARAMITA_API_KEY",
+        "model": "free-chat",
         "extraBody": {
           "enable_thinking": false
         },
@@ -161,7 +136,7 @@
     "enabled": true,
     "dataDir": "data/message-memory",
     "maxEventsPerChannel": 400,
-    "recentMessageCount": 20,
+    "recentMessageCount": 30,
     "maxAnchorRounds": 20,
     "compactCheckInterval": 50,
     "compactOnStartup": true,
@@ -187,7 +162,7 @@
   },
   "pluginConfigs": {
     "iirose-admin-follow-room": {
-      "leaderUid": "your_admin_uid",
+      "leaderUid": "YOUR_ADMIN_UID",
       "onlyWhenLeavingCurrentRoom": false
     }
   },
@@ -201,8 +176,8 @@
     "perMinute": 60
   },
   "policy": {
-    "allowHighRiskTools": false,
-    "allowCrossSessionSend": false,
+    "allowHighRiskTools": true,
+    "allowCrossSessionSend": true,
     "maxMessagesPerWorkflow": 3
   }
 }

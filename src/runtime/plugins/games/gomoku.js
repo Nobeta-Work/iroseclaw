@@ -1542,6 +1542,29 @@ module.exports = {
         createRestartTool(service),
         createQuitTool(service)
       ],
+      skills: [
+        {
+          id: 'games.gomoku',
+          name: '五子棋',
+          summary: '发起、加入并管理五子棋对局。',
+          toolNames: [
+            'games.gomoku.start',
+            'games.gomoku.join',
+            'games.gomoku.status',
+            'games.gomoku.rules',
+            'games.gomoku.undo',
+            'games.gomoku.approve_undo',
+            'games.gomoku.restart',
+            'games.gomoku.quit'
+          ],
+          tags: ['games', 'gomoku'],
+          examples: ['五子棋', '加入五子棋'],
+          metadata: {
+            priority: 75,
+            pluginName: 'games-gomoku'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'games-gomoku',
         description: '无需 LLM 的准交互五子棋'

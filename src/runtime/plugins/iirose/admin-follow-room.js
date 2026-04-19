@@ -588,6 +588,25 @@ module.exports = {
           handler: async ({ service: svc }) => svc.createStatusText()
         })
       ],
+      skills: [
+        {
+          id: 'iirose.admin-follow-room',
+          name: '管理员跟房',
+          summary: '控制 bot 是否在管理员切房时自动跟随。',
+          toolNames: [
+            'iirose.room.follow.enable',
+            'iirose.room.follow.disable',
+            'iirose.room.follow.status'
+          ],
+          tags: ['iirose', 'room', 'admin'],
+          adminOnly: true,
+          examples: ['开启跟随切房', '查看跟房状态'],
+          metadata: {
+            priority: 58,
+            pluginName: 'iirose-admin-follow-room'
+          }
+        }
+      ],
       triggerTemplates: [
         {
           kind: 'message.mentioned',

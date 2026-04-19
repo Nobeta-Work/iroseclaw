@@ -129,6 +129,25 @@ module.exports = {
           }
         })
       ],
+      skills: [
+        {
+          id: 'iirose.room-management',
+          name: '房间管理',
+          summary: '查询当前房间、切房、订阅房间等 IIROSE 房间操作。',
+          toolNames: [
+            'iirose.room.current',
+            'iirose.room.list',
+            'iirose.room.move',
+            'iirose.room.subscribe',
+            'iirose.room.unsubscribe'
+          ],
+          tags: ['iirose', 'room'],
+          metadata: {
+            priority: 65,
+            pluginName: 'iirose-room-tools'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'iirose-room-tools'
       },

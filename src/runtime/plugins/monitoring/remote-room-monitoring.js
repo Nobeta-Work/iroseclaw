@@ -876,6 +876,21 @@ module.exports = {
           monitoringService
         })
       ],
+      skills: [
+        {
+          id: 'observability.room-monitoring',
+          name: '房间观察',
+          summary: '分析当前或指定房间最近消息，提取话题与风险信息。',
+          toolNames: ['monitoring.room.analyze'],
+          tags: ['monitoring', 'observability', 'moderation'],
+          adminOnly: true,
+          examples: ['查看当前房间状况', '分析这个房间最近讨论了什么'],
+          metadata: {
+            priority: 85,
+            pluginName: 'remote-room-monitoring'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'remote-room-monitoring',
         adminOnly: true,

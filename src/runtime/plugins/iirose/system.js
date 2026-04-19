@@ -48,6 +48,24 @@ module.exports = {
           }
         })
       ],
+      skills: [
+        {
+          id: 'iirose.system-information',
+          name: '站内信息查询',
+          summary: '查询 IIROSE 论坛、任务、排行榜等系统信息。',
+          toolNames: [
+            'iirose.system.forum.get',
+            'iirose.system.tasks.get',
+            'iirose.system.leaderboard.get'
+          ],
+          tags: ['iirose', 'system', 'lookup'],
+          examples: ['查看论坛', '看看任务列表'],
+          metadata: {
+            priority: 60,
+            pluginName: 'iirose-system-tools'
+          }
+        }
+      ],
       metadata: {
         pluginName: 'iirose-system-tools'
       }

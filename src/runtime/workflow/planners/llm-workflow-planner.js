@@ -5,8 +5,14 @@
 
 const { normalizeWorkflowStepDecision } = require('../../../contracts/workflow');
 const { BaseWorkflowPlanner } = require('./base-planner');
-const { compileWorkflowPrompt } = require('../prompt/compiler');
+const {
+  compileWorkflowPrompt,
+  buildPromptProfileLines,
+  resolvePromptProfile
+} = require('../prompt/compiler');
 const { parseWorkflowDecisionText } = require('../decision/parser');
+const { buildContextPrompt } = require('../prompt/serializers');
+const { containsMarkdownCodeFence } = require('../../../utils/iirose-markdown');
 
 function normalizeProviderName(providerName = '') {
   return String(providerName || '').trim().toLowerCase();
@@ -31,6 +37,89 @@ function looksLikeProviderErrorText(text = '') {
   );
 }
 
+function getCurrentRequestText(input = {}) {
+  const candidates = [
+    input?.trigger?.payload?.content,
+    input?.protocolRequest?.message?.content,
+    input?.protocolRequest?.context?.currentMessage?.content
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return '';
+}
+
+function normalizeCompactText(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function looksLikeMarkdownIntent(text = '') {
+  return /(markdown|md格式|markdown格式|代码块|code\s*block|```)/i.test(String(text || ''));
+}
+
+function looksLikeCodeIntent(text = '') {
+  return /((代码|程序|脚本|示例|示例代码|代码示例|snippet|demo).{0,8}(python|py|java|javascript|js|typescript|ts|go|golang|rust|sql|bash|shell|html|css|json|yaml|xml|c\+\+|c#)?)|(\bpython\b|\bjava\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\bgo\b|\bgolang\b|\brust\b|\bsql\b|\bbash\b|\bshell\b|\bhtml\b|\bcss\b|\bjson\b|\byaml\b|\bxml\b|c\+\+|c#)/i.test(String(text || ''));
+}
+
+function inferRenderMode(replyText = '', input = {}) {
+  if (containsMarkdownCodeFence(replyText)) {
+    return 'markdown';
+  }
+
+  const requestText = getCurrentRequestText(input);
+  if (looksLikeMarkdownIntent(requestText) && String(replyText || '').includes('\n')) {
+    return 'markdown';
+  }
+
+  return 'plain';
+}
+
+function shouldBypassStructuredDecision(decision = {}, input = {}) {
+  const requestText = getCurrentRequestText(input);
+  const wantsCode = looksLikeCodeIntent(requestText);
+  const wantsMarkdown = looksLikeMarkdownIntent(requestText);
+  if (!wantsCode && !wantsMarkdown) {
+    return false;
+  }
+
+  if (decision.status === 'needs_tools') {
+    return true;
+  }
+
+  if (decision.status !== 'final') {
+    return false;
+  }
+
+  const replyText = typeof decision.finalOutput?.text === 'string' ? decision.finalOutput.text.trim() : '';
+  if (!replyText) {
+    return true;
+  }
+
+  if (containsMarkdownCodeFence(replyText)) {
+    return false;
+  }
+
+  const compactReply = normalizeCompactText(replyText);
+  const compactRequest = normalizeCompactText(requestText);
+  const likelyEcho = compactRequest
+    && (compactReply === compactRequest
+      || (compactReply.includes(compactRequest) && compactReply.length <= compactRequest.length + 12));
+
+  if (wantsCode && decision.finalOutput?.renderMode !== 'markdown') {
+    return true;
+  }
+
+  if (wantsCode) {
+    return true;
+  }
+
+  return likelyEcho;
+}
+
 class LlmWorkflowPlanner extends BaseWorkflowPlanner {
   constructor(options = {}) {
     super(options);
@@ -41,6 +130,105 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
     this.logger = options.logger || console;
     this.config = options.config && typeof options.config === 'object' ? options.config : {};
     this.label = options.label || 'llm-default';
+  }
+
+  _buildDirectReplyPrompt(input = {}) {
+    const protocolRequest = input.protocolRequest || {};
+    const contextPrompt = buildContextPrompt(protocolRequest, {
+      useNativeSessionContext: this.config.useNativeSessionContext === true
+    });
+    const currentRequest = getCurrentRequestText(input);
+    const promptProfile = resolvePromptProfile(input, {
+      promptProfile: this.config.promptProfile || {},
+      promptProfileService: this.config.promptProfileService || null
+    });
+    const lines = [
+      contextPrompt,
+      ''
+    ];
+
+    lines.push(...buildPromptProfileLines(promptProfile), '');
+    lines.push(
+      '现在切换到直接回复模式。',
+      '不要输出 JSON，不要描述工具调用，不要解释系统内部执行过程。',
+      '直接输出将要发给用户的最终回复内容。'
+    );
+
+    if (looksLikeCodeIntent(currentRequest) || looksLikeMarkdownIntent(currentRequest)) {
+      lines.push('如果用户要求代码、代码块或 markdown，请直接使用 markdown 回复。');
+      lines.push('当输出代码时，必须放在三反引号代码块中，并尽量给出最小可运行示例。');
+    } else {
+      lines.push('保持自然、直接、贴近当前上下文。');
+    }
+
+    return lines.join('\n');
+  }
+
+  _buildDirectReplyDecision(replyText = '', input = {}, providerName = '', reason = 'decision_parse_fallback') {
+    return normalizeWorkflowStepDecision({
+      status: 'final',
+      finalOutput: {
+        mode: 'reply',
+        text: replyText,
+        renderMode: inferRenderMode(replyText, input),
+        replySegments: []
+      },
+      audit: {
+        reason,
+        blocked: false,
+        planner: this.label,
+        provider: providerName
+      }
+    });
+  }
+
+  async _attemptDirectReplyFallback(input = {}, providerName = '', reason = 'agent_reply_fallback') {
+    let result = null;
+    let replyText = '';
+    let replyProvider = providerName;
+    const maxRetries = this._getMaxRetries(providerName || this._getProviderName({}));
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      result = await this.provider.complete({
+        message: this._buildDirectReplyPrompt(input),
+        timeoutMs: this.config.timeoutMs,
+        json: false
+      });
+      replyText = this._getDecisionText(result).trim();
+      replyProvider = this._getProviderName(result) || providerName;
+      const retryableFailure = result?.ok === false || looksLikeProviderErrorText(replyText);
+      if (!retryableFailure || attempt >= maxRetries) {
+        break;
+      }
+
+      this.logger.warn?.(
+        `[LlmWorkflowPlanner] retrying direct reply fallback after attempt ${attempt + 1}: ${result?.error || replyText.slice(0, 160)}`
+      );
+    }
+
+    if (!result?.ok) {
+      return {
+        ok: false,
+        providerName: replyProvider,
+        reason: `provider error: ${result?.error || 'unknown error'}`
+      };
+    }
+
+    if (!replyText || looksLikeProviderErrorText(replyText)) {
+      return {
+        ok: false,
+        providerName: replyProvider,
+        reason: replyText
+          ? `provider error text: ${replyText.slice(0, 600)}`
+          : 'empty direct reply fallback output'
+      };
+    }
+
+    return {
+      ok: true,
+      decision: this._buildDirectReplyDecision(replyText, input, replyProvider, reason),
+      providerName: replyProvider
+    };
   }
 
   _getProviderName(result = {}) {
@@ -64,7 +252,7 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
       return configured;
     }
 
-    return normalizeProviderName(providerName) === 'openclaw' ? 1 : 0;
+    return normalizeProviderName(providerName) ? 2 : 2;
   }
 
   _shouldRetry(result, parsed, providerName, attempt, maxRetries) {
@@ -72,17 +260,8 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
       return false;
     }
 
-    const normalizedProvider = normalizeProviderName(providerName);
-    if (normalizedProvider !== 'openclaw') {
-      return false;
-    }
-
     if (result?.ok === false) {
       return true;
-    }
-
-    if (parsed?.ok === true) {
-      return false;
     }
 
     const decisionText = this._getDecisionText(result);
@@ -124,6 +303,8 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
     let lastResult = null;
     let lastParsed = null;
     let providerName = '';
+    let lastFailureReason = '';
+    let lastFailureProviderName = '';
     const fallbackProviderName = this._getProviderName({});
     const maxRetries = this._getMaxRetries(fallbackProviderName);
 
@@ -138,9 +319,18 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
       providerName = this._getProviderName(result);
       const decisionText = this._getDecisionText(result);
       const parsed = parseWorkflowDecisionText(decisionText);
+      const providerFailureReason = result?.ok === false
+        ? `provider error: ${result.error || 'unknown error'}`
+        : (looksLikeProviderErrorText(decisionText) || looksLikeProviderErrorText(result?.raw?.stdout || '')
+          ? `provider error text: ${decisionText.slice(0, 600)}`
+          : '');
+      if (providerFailureReason) {
+        lastFailureReason = providerFailureReason;
+        lastFailureProviderName = providerName || fallbackProviderName;
+      }
 
       if (parsed.ok && parsed.decision) {
-        return normalizeWorkflowStepDecision({
+        const normalizedDecision = normalizeWorkflowStepDecision({
           ...parsed.decision,
           audit: {
             ...(parsed.decision.audit || {}),
@@ -148,6 +338,30 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
             provider: providerName
           }
         });
+
+        if (shouldBypassStructuredDecision(normalizedDecision, input)) {
+          this.logger.warn?.(
+            `[LlmWorkflowPlanner] bypassing structured decision for direct reply fallback: status=${normalizedDecision.status}`
+          );
+          const fallbackReply = await this._attemptDirectReplyFallback(input, providerName, 'agent_reply_fallback');
+          if (fallbackReply.ok && fallbackReply.decision) {
+            return fallbackReply.decision;
+          }
+
+          if (normalizedDecision.status === 'needs_tools') {
+            return normalizeWorkflowStepDecision({
+              status: 'error',
+              audit: {
+                reason: fallbackReply.reason || 'agent reply fallback failed after suspicious tool decision',
+                blocked: false,
+                planner: this.label,
+                provider: fallbackReply.providerName || providerName
+              }
+            });
+          }
+        }
+
+        return normalizedDecision;
       }
 
       lastResult = result;
@@ -158,7 +372,7 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
           ? `provider error: ${result.error || 'unknown error'}`
           : `invalid workflow decision: ${parsed.error || 'empty response'}`;
         this.logger.warn?.(
-          `[LlmWorkflowPlanner] retrying OpenClaw provider after attempt ${attempt + 1}: ${retryReason}`
+          `[LlmWorkflowPlanner] retrying provider after attempt ${attempt + 1}: ${retryReason}`
         );
         continue;
       }
@@ -166,9 +380,34 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
       break;
     }
 
-    const reason = lastResult?.ok === false
-      ? `provider error: ${lastResult.error || 'unknown error'}`
-      : `invalid workflow decision: ${lastParsed?.error || 'empty response'}`;
+    const nonJsonReply = this._getDecisionText(lastResult).trim();
+    if (nonJsonReply && !looksLikeProviderErrorText(nonJsonReply)) {
+      this.logger.warn?.('[LlmWorkflowPlanner] decision parse fallback to direct final reply');
+      const fallbackReply = await this._attemptDirectReplyFallback(
+        input,
+        providerName || fallbackProviderName,
+        'decision_parse_fallback'
+      );
+      if (fallbackReply.ok && fallbackReply.decision) {
+        return fallbackReply.decision;
+      }
+
+      return normalizeWorkflowStepDecision({
+        status: 'error',
+        audit: {
+          reason: 'invalid workflow decision: decision parse fallback failed',
+          blocked: false,
+          planner: this.label,
+          provider: fallbackReply.providerName || providerName || fallbackProviderName
+        }
+      });
+    }
+
+    const reason = lastFailureReason || (
+      lastResult?.ok === false
+        ? `provider error: ${lastResult.error || 'unknown error'}`
+        : `invalid workflow decision: ${lastParsed?.error || 'empty response'}`
+    );
     this.logger.warn?.(`[LlmWorkflowPlanner] ${reason}`);
 
     return normalizeWorkflowStepDecision({
@@ -177,7 +416,7 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
         reason,
         blocked: false,
         planner: this.label,
-        provider: providerName || fallbackProviderName
+        provider: providerName || lastFailureProviderName || fallbackProviderName
       }
     });
   }

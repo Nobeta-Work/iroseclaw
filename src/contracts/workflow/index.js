@@ -5,6 +5,7 @@
 
 const { generateRequestId } = require('../../utils/json-utils');
 const { normalizeToolCall } = require('../tool');
+const { normalizeRenderMode } = require('../output');
 
 const WORKFLOW_STATUSES = ['needs_tools', 'final', 'blocked', 'error'];
 
@@ -20,6 +21,7 @@ function normalizeFinalOutput(output = {}) {
       ? output.mode.trim()
       : 'reply',
     text: typeof output.text === 'string' ? output.text : '',
+    renderMode: normalizeRenderMode(output.renderMode),
     replySegments: Array.isArray(output.replySegments) ? [...output.replySegments] : [],
     operations
   };

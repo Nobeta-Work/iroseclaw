@@ -41,7 +41,7 @@ class OpenClawAdapter {
         ? { ...input.promptProfile }
         : {},
       retry: {
-        maxRetries: toPositiveInt(input?.retry?.maxRetries, 1),
+        maxRetries: toPositiveInt(input?.retry?.maxRetries, 2),
         retryDelayMs: toPositiveInt(input?.retry?.retryDelayMs, 250)
       }
     };

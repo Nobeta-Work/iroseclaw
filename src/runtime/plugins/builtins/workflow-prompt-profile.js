@@ -116,9 +116,9 @@ module.exports = {
       tools: [
         createAdminTool({
           name: 'workflow.prompt.style.status',
-          description: '查看当前 workflow LLM 提示词风格配置。',
-          aliases: ['提示词风格', '当前风格', '风格状态'],
-          directAliases: ['提示词风格', '当前风格', '风格状态'],
+          description: '查看当前 workflow LLM 提示词配置与可切换 prompt 列表。',
+          aliases: ['提示词列表', '当前提示词', 'prompt列表', '提示词配置', '当前prompt'],
+          directAliases: ['提示词列表', '当前提示词', 'prompt列表', '提示词配置', '当前prompt'],
           config: context.config,
           service,
           handler: ({ service: svc }) => svc.createStatusText(),
@@ -127,34 +127,51 @@ module.exports = {
         }),
         createAdminTool({
           name: 'workflow.prompt.style.set',
-          description: '切换 workflow LLM 提示词风格（平淡/热情/爱慕）。',
-          aliases: ['切换风格', '设置风格', '风格切换', '平淡模式', '热情模式', '爱慕模式'],
-          directAliases: ['切换风格', '设置风格', '风格切换', '平淡模式', '热情模式', '爱慕模式'],
+          description: '切换 workflow LLM 当前常态 prompt 文件。',
+          aliases: ['切换提示词', '设置提示词', '切换prompt', '设置prompt', 'prompt切换'],
+          directAliases: ['切换提示词', '设置提示词', '切换prompt', '设置prompt', 'prompt切换'],
           config: context.config,
           service,
           handler: ({ input, context: toolContext, service: svc }) => {
             const styleKey = resolveRequestedStyle(input, toolContext, svc);
             if (!styleKey) {
-              throw new Error('请指定风格：平淡 / 热情 / 爱慕。示例：切换风格 热情');
+              throw new Error('请指定要切换的提示词。示例：切换提示词 女仆');
             }
             const profile = svc.setActiveStyle(styleKey);
-            return `已切换提示词风格为：${profile.styleLabel} (${profile.activeStyle})`;
+            return `已切换当前提示词为：${profile.styleLabel} (${profile.activeStyle})`;
           }
         })
+      ],
+      skills: [
+        {
+          id: 'workflow.prompt-management',
+          name: '提示词管理',
+          summary: '查看和切换 workflow 当前 prompt。',
+          toolNames: [
+            'workflow.prompt.style.status',
+            'workflow.prompt.style.set'
+          ],
+          tags: ['workflow', 'prompt', 'admin'],
+          adminOnly: true,
+          metadata: {
+            priority: 60,
+            pluginName: 'builtin-workflow-prompt-profile'
+          }
+        }
       ],
       triggerTemplates: [
         {
           kind: 'message.mentioned',
           template: {
             toolNames: ['workflow.prompt.style.status', 'workflow.prompt.style.set'],
-            instruction: '管理员可通过“提示词风格/切换风格 平淡|热情|爱慕”调整机器人回复风格。'
+            instruction: '管理员可通过“提示词列表 / 切换提示词 女仆”查看或切换当前常态 prompt。'
           }
         },
         {
           kind: 'message.private',
           template: {
             toolNames: ['workflow.prompt.style.status', 'workflow.prompt.style.set'],
-            instruction: '管理员私聊可控制 workflow 提示词风格。'
+            instruction: '管理员私聊可控制 workflow 当前提示词。'
           }
         }
       ],

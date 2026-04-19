@@ -50,8 +50,13 @@ const buildRequest = (session, message, permissionCtx, context = {}) => {
       },
       recentMessages: context?.recentMessages || permissionCtx?.recentMessages || [],
       channelRecentMessages: context?.channelRecentMessages || [],
+      globalSharedRecentMessages: context?.globalSharedRecentMessages || [],
+      globalSharedHistorySummary: context?.globalSharedHistorySummary || [],
+      globalSharedAnchorCount: Number.isFinite(Number(context?.globalSharedAnchorCount))
+        ? Number(context.globalSharedAnchorCount)
+        : 0,
       historySummary: context?.historySummary || [],
-      anchorCount: Number.isFinite(context?.anchorCount) ? context.anchorCount : 0
+      anchorCount: Number.isFinite(Number(context?.anchorCount)) ? Number(context.anchorCount) : 0
     }
   };
 };

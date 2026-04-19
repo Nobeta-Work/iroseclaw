@@ -3,9 +3,10 @@
  * 统一承载 tool/output/policy/trigger-template/service 扩展注册
  */
 
-const { sendReplyThroughRuntime } = require('../message/handler');
+const { sendReplyThroughRuntime, shouldSuppressWorkflowFallback } = require('../message/handler');
 const { normalizeToolPackage } = require('../../tools/packages');
 const { WorkflowHookRegistry } = require('../workflow/hooks/registry');
+const { SkillCatalog } = require('../skills/catalog');
 
 class PluginHost {
   constructor(options = {}) {
@@ -21,6 +22,9 @@ class PluginHost {
     this.workflowRuntime = options.workflowRuntime || null;
     this.pickFallback = typeof options.pickFallback === 'function' ? options.pickFallback : null;
     this.stateStore = options.stateStore || null;
+    this.skillCatalog = options.skillCatalog || new SkillCatalog({
+      logger: this.logger
+    });
     this.services = new Map();
     this.plugins = new Map();
     this.providers = new Map();
@@ -52,6 +56,36 @@ class PluginHost {
     return this.toolRegistry.register(definition);
   }
 
+  registerSkill(definition) {
+    if (!this.skillCatalog) {
+      throw new Error('skill catalog is not configured');
+    }
+    return this.skillCatalog.register(definition);
+  }
+
+  getSkill(id) {
+    return this.skillCatalog?.get(id) || null;
+  }
+
+  listSkills() {
+    return this.skillCatalog?.list?.() || [];
+  }
+
+  filterVisibleTools(visibleTools = [], options = {}) {
+    const isAdmin = options.isAdmin === true;
+    return (Array.isArray(visibleTools) ? visibleTools : []).filter((tool) => {
+      if (!tool || typeof tool !== 'object') return false;
+      if (isAdmin) return true;
+      if (tool.metadata?.adminOnly === true) return false;
+      if (Array.isArray(tool.permission) && tool.permission.includes('admin')) return false;
+      return true;
+    });
+  }
+
+  resolveVisibleSkills(visibleTools = [], options = {}) {
+    return this.skillCatalog?.resolveVisibleSkills?.(visibleTools, options) || [];
+  }
+
   registerToolPackage(definition, options = {}) {
     const toolPackage = normalizeToolPackage(definition);
     const packageName = toolPackage.name;
@@ -62,6 +96,12 @@ class PluginHost {
     }
 
     const registeredTools = toolPackage.tools.map(tool => this.registerTool(tool));
+    const fallbackSkillDefinitions = toolPackage.skills.length > 0
+      ? toolPackage.skills
+      : (registeredTools.length > 0 ? [this._buildFallbackSkillFromPackage(toolPackage, registeredTools)] : []);
+    const registeredSkills = fallbackSkillDefinitions
+      .filter(Boolean)
+      .map(skill => this.registerSkill(skill));
     const outputPluginCleanups = toolPackage.outputPlugins
       .map(plugin => this.registerOutputPlugin(plugin))
       .filter(cleanup => typeof cleanup === 'function');
@@ -87,6 +127,7 @@ class PluginHost {
     const registration = {
       ...toolPackage,
       tools: registeredTools,
+      skills: registeredSkills,
       outputPlugins: [...toolPackage.outputPlugins],
       triggerTemplates: registeredTriggerTemplates,
       hooks: registeredHooks,
@@ -101,6 +142,7 @@ class PluginHost {
       name: item.name,
       version: item.version,
       tools: item.tools.map(tool => tool.name),
+      skills: item.skills.map(skill => skill.id),
       triggerTemplates: item.triggerTemplates.map(entry => entry.kind),
       hooks: item.hooks.length,
       outputPlugins: item.outputPlugins.length,
@@ -277,6 +319,15 @@ class PluginHost {
       : (this.triggerTemplateRegistry
         ? this.triggerTemplateRegistry.resolveTools(this.toolRegistry, kind)
         : this.toolRegistry?.list({ workflowVisibleOnly: true }) || []);
+    const filteredTools = this.filterVisibleTools(availableTools, {
+      isAdmin: options.isAdmin === true
+    });
+    const visibleSkills = Array.isArray(options.visibleSkills)
+      ? options.visibleSkills
+      : this.resolveVisibleSkills(filteredTools, {
+        triggerKind: kind,
+        isAdmin: options.isAdmin === true
+      });
 
     const context = options.context && typeof options.context === 'object'
       ? { ...options.context }
@@ -289,16 +340,19 @@ class PluginHost {
       trigger,
       protocolRequest: options.protocolRequest || {},
       context,
-      availableTools
+      availableTools: filteredTools,
+      visibleSkills
     });
 
     const workflowDecision = workflowResult?.decision;
     const hasFinalOutput = Boolean(workflowResult?.outputResult);
     const hasToolOutput = Array.isArray(workflowResult?.outputResults) && workflowResult.outputResults.length > 0;
+    const suppressFallback = shouldSuppressWorkflowFallback(workflowResult);
 
     if (
       (workflowDecision?.status === 'error' || workflowDecision?.status === 'blocked') &&
       options.sendFallbackOnError === true &&
+      !suppressFallback &&
       this.outputRuntime &&
       this.pickFallback &&
       context.session
@@ -310,6 +364,7 @@ class PluginHost {
       !hasFinalOutput &&
       !hasToolOutput &&
       options.sendFallbackOnError === true &&
+      !suppressFallback &&
       this.outputRuntime &&
       this.pickFallback &&
       context.session
@@ -349,11 +404,13 @@ class PluginHost {
       triggerTemplateRegistry: this.triggerTemplateRegistry,
       contextService: this.contextService,
       workflowRuntime: this.workflowRuntime,
+      skillCatalog: this.skillCatalog,
       stateStore: this.stateStore,
       hookRegistry: this.hookRegistry,
       pickFallback: this.pickFallback,
       getPluginConfig: (fallback = {}) => this.getPluginConfig(pluginName, fallback),
       registerTool: (definition) => this.registerTool(definition),
+      registerSkill: (definition) => this.registerSkill(definition),
       registerToolPackage: (definition) => this.registerToolPackage(definition, { pluginName }),
       registerOutputPlugin: (plugin) => this.registerOutputPlugin(plugin),
       registerPolicyRule: (rule) => this.registerPolicyRule(rule),
@@ -362,9 +419,44 @@ class PluginHost {
       registerPlanner: (name, planner) => this.registerPlanner(name, planner),
       registerHook: (hook) => this.registerHook(hook),
       registerCleanup: (cleanup) => this.registerCleanup(pluginName, cleanup),
+      listSkills: () => this.listSkills(),
+      filterVisibleTools: (visibleTools = [], options = {}) => this.filterVisibleTools(visibleTools, options),
+      resolveVisibleSkills: (visibleTools = [], options = {}) => this.resolveVisibleSkills(visibleTools, options),
       dispatchTrigger: (trigger, options = {}) => this.dispatchTrigger(trigger, options),
       runWorkflow: (input = {}) => this.runWorkflow(input),
       host: this
+    };
+  }
+
+  _buildFallbackSkillFromPackage(toolPackage, registeredTools = []) {
+    if (!toolPackage || !toolPackage.name || registeredTools.length === 0) {
+      return null;
+    }
+
+    const packageId = String(toolPackage.name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-');
+    if (!packageId) {
+      return null;
+    }
+
+    const description = String(toolPackage.metadata?.description || '').trim();
+    const pluginName = String(toolPackage.metadata?.pluginName || '').trim();
+    const allAdminOnly = registeredTools.every(tool => tool?.metadata?.adminOnly === true || tool?.permission?.includes?.('admin'));
+
+    return {
+      id: `package.${packageId}`,
+      name: description || pluginName || toolPackage.name,
+      summary: description || `Capabilities exposed by ${toolPackage.name}.`,
+      toolNames: registeredTools.map(tool => tool.name),
+      adminOnly: allAdminOnly,
+      metadata: {
+        generated: true,
+        packageName: toolPackage.name,
+        pluginName,
+        priority: 10
+      }
     };
   }
 }

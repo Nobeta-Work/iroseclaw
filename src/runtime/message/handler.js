@@ -34,12 +34,107 @@ async function sendReplyThroughRuntime(outputRuntime, executionContext, text, op
     kind: 'reply.current',
     content: {
       text,
-      useMemePipeline: options.useMemePipeline === true
+      useMemePipeline: options.useMemePipeline === true,
+      renderMode: typeof options.renderMode === 'string' ? options.renderMode : ''
     },
     options: {
       recordConversation: options.recordConversation !== false
     }
   }, executionContext);
+}
+
+function extractWorkflowReplyText(workflowResult = {}) {
+  const directResult = workflowResult?.outputResult || null;
+  const finalResults = Array.isArray(workflowResult?.finalOutputResults) ? workflowResult.finalOutputResults : [];
+  const candidates = [];
+
+  if (directResult) {
+    candidates.push(directResult);
+  }
+  candidates.push(...finalResults);
+
+  const recordableKinds = new Set(['reply.current', 'message.route']);
+  const texts = [];
+  for (const item of candidates) {
+    const operation = item?.operation || {};
+    if (!recordableKinds.has(operation.kind)) {
+      continue;
+    }
+    const text = typeof operation.metadata?.recordText === 'string' && operation.metadata.recordText.trim()
+      ? operation.metadata.recordText.trim()
+      : (typeof operation.content?.text === 'string' ? operation.content.text.trim() : '');
+    if (text) {
+      texts.push(text);
+    }
+  }
+
+  return texts.join('\n').trim();
+}
+
+function schedulePersonaMemoryWriteback(options = {}, payload = {}) {
+  const promptMemoryService = options.promptMemoryService || null;
+  if (!promptMemoryService || typeof promptMemoryService.recordRound !== 'function') {
+    return null;
+  }
+
+  const promptProfileSnapshot = options.promptProfileSnapshot || options.promptProfileService?.resolveProfile?.() || null;
+  const promptKey = String(payload.promptKey || promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '').trim();
+  if (!promptKey) {
+    return null;
+  }
+
+  const replyText = typeof payload.replyText === 'string' ? payload.replyText.trim() : '';
+  if (!replyText) {
+    return null;
+  }
+
+  const trigger = options.trigger || {};
+  const session = options.session || {};
+  const timestamp = Number.isFinite(Number(payload.timestamp))
+    ? Math.floor(Number(payload.timestamp))
+    : (Number.isFinite(Number(trigger.timestamp)) ? Math.floor(Number(trigger.timestamp)) : Date.now());
+
+  return promptMemoryService.recordRound({
+    promptKey,
+    promptLabel: payload.promptLabel || promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+    sourceMode: payload.sourceMode || '',
+    triggerKind: payload.triggerKind || trigger.kind || '',
+    sourceScope: payload.sourceScope || (trigger.isPrivateSession === true ? 'private' : 'public'),
+    channelId: payload.channelId || trigger.channelId || session.channelId || session.chatId || '',
+    userId: payload.userId || trigger.userId || session.userId || '',
+    username: payload.username || trigger.username || session.username || '',
+    currentMessage: payload.currentMessage || trigger.cleanedContent || trigger.rawContent || '',
+    replyText,
+    roundId: payload.roundId || trigger.messageId || session.messageId || '',
+    timestamp
+  }).catch((error) => {
+    (options.logger || console).warn?.(`[workflow.persona-memory] failed to write back memory: ${error.message}`);
+    return null;
+  });
+}
+
+function isSilentWorkflowFailureReason(reason = '') {
+  const normalized = String(reason || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.startsWith('provider error:') ||
+    normalized.startsWith('provider error text:') ||
+    normalized.startsWith('invalid workflow decision:') ||
+    normalized.includes('empty direct reply fallback output') ||
+    normalized.includes('agent reply fallback failed')
+  );
+}
+
+function shouldSuppressWorkflowFallback(workflowResult = {}) {
+  const workflowDecision = workflowResult?.decision;
+  if (workflowDecision?.status !== 'error') {
+    return false;
+  }
+
+  return isSilentWorkflowFailureReason(workflowDecision.audit?.reason || '');
 }
 
 async function handleWorkflowTrigger(workflowRuntime, toolRegistry, outputRuntime, pickFallback, trigger, executionContext, options = {}) {
@@ -49,21 +144,23 @@ async function handleWorkflowTrigger(workflowRuntime, toolRegistry, outputRuntim
     context: executionContext,
     availableTools: Array.isArray(options.availableTools)
       ? options.availableTools
-      : toolRegistry.list({ workflowVisibleOnly: true })
+      : toolRegistry.list({ workflowVisibleOnly: true }),
+    visibleSkills: Array.isArray(options.visibleSkills) ? options.visibleSkills : []
   });
 
   const workflowDecision = workflowResult?.decision;
   const hasFinalOutput = Boolean(workflowResult?.outputResult);
   const hasToolOutput = Array.isArray(workflowResult?.outputResults) && workflowResult.outputResults.length > 0;
+  const suppressFallback = shouldSuppressWorkflowFallback(workflowResult);
 
   if (workflowDecision?.status === 'error' || workflowDecision?.status === 'blocked') {
-    if (options.sendFallbackOnError === true) {
+    if (options.sendFallbackOnError === true && !suppressFallback) {
       await sendReplyThroughRuntime(outputRuntime, executionContext, pickFallback());
     }
     return workflowResult;
   }
 
-  if (!hasFinalOutput && !hasToolOutput && options.sendFallbackOnError === true) {
+  if (!hasFinalOutput && !hasToolOutput && options.sendFallbackOnError === true && !suppressFallback) {
     await sendReplyThroughRuntime(outputRuntime, executionContext, pickFallback());
   }
 
@@ -79,18 +176,31 @@ function buildExecutionContext(options = {}) {
     contextService
   } = options;
   const template = options.template || null;
+  const sourceScope = trigger.isPrivateSession === true ? 'private' : 'public';
+  const sourceChannelId = trigger.channelId || session.channelId || session.chatId || '';
+  const sourceTriggerKind = trigger.kind || '';
 
   return {
     session,
     ctx,
     userId: trigger.userId,
     username: trigger.username,
+    currentEventId: options.currentEventId || null,
+    trigger,
+    triggerKind: sourceTriggerKind,
+    sourceScope,
+    sourceChannelId,
+    sourceTriggerKind,
     triggerTemplate: template,
     contextService,
     conversationStore: contextService,
     sendOptions: {
       conversationStore: contextService,
       botProfile,
+      sourceScope,
+      sourceChannelId,
+      sourceTriggerKind,
+      triggerKind: sourceTriggerKind,
       ...(options.sendOptions && typeof options.sendOptions === 'object' ? options.sendOptions : {})
     }
   };
@@ -167,6 +277,49 @@ function resolveDirectToolCall(options = {}, executionContext = {}) {
   };
 }
 
+function resolveDirectReplyAgentCall(options = {}, executionContext = {}, chatRequest = null) {
+  const {
+    trigger,
+    directReplyAgent,
+    outputRuntime
+  } = options;
+  const content = typeof trigger?.cleanedContent === 'string' ? trigger.cleanedContent.trim() : '';
+
+  if (!content || !directReplyAgent || typeof directReplyAgent.generateReply !== 'function') {
+    return null;
+  }
+
+  if (typeof directReplyAgent.shouldHandleRequest === 'function' && !directReplyAgent.shouldHandleRequest(content)) {
+    return null;
+  }
+
+  return async () => {
+    const result = await directReplyAgent.generateReply({
+      trigger,
+      protocolRequest: chatRequest?.protocolRequest || {},
+      context: executionContext,
+      availableTools: Array.isArray(options.availableTools) ? options.availableTools : [],
+      visibleSkills: Array.isArray(options.visibleSkills) ? options.visibleSkills : []
+    });
+
+    if (!result?.ok || !String(result.text || '').trim()) {
+      return null;
+    }
+
+    await sendReplyThroughRuntime(outputRuntime, executionContext, result.text, {
+      renderMode: result.renderMode,
+      useMemePipeline: result.renderMode !== 'markdown'
+    });
+
+    return {
+      mode: 'direct-agent',
+      replyText: result.text,
+      renderMode: result.renderMode,
+      provider: result.provider || ''
+    };
+  };
+}
+
 async function invokeWorkflowChat(options = {}) {
   const {
     trigger,
@@ -179,6 +332,7 @@ async function invokeWorkflowChat(options = {}) {
   } = options;
   const template = options.template || null;
   const executionContext = buildExecutionContext(options);
+  const promptProfileSnapshot = options.promptProfileSnapshot || options.promptProfileService?.resolveProfile?.() || null;
   const directToolCall = resolveDirectToolCall(options, executionContext);
 
   if (directToolCall) {
@@ -186,6 +340,9 @@ async function invokeWorkflowChat(options = {}) {
   }
 
   const conversationContext = resolveConversationContext(options);
+  const availableTools = Array.isArray(options.availableTools)
+    ? options.availableTools
+    : toolRegistry.list({ workflowVisibleOnly: true });
 
   const chatRequest = buildChatProtocolRequest({
     userId: trigger.userId,
@@ -196,7 +353,7 @@ async function invokeWorkflowChat(options = {}) {
     platform: session.platform || 'iirose',
     content: trigger.cleanedContent,
     isPrivate: trigger.isPrivateSession === true,
-    availableSkills: typeof skillManager?.list === 'function'
+      availableSkills: typeof skillManager?.list === 'function'
       ? skillManager.list().map(skill => skill.name)
       : [],
     conversationContext,
@@ -209,6 +366,31 @@ async function invokeWorkflowChat(options = {}) {
       mode: 'chat-blocked',
       replyText: chatRequest.replyText || pickFallback()
     };
+  }
+
+  const directReplyAgentCall = resolveDirectReplyAgentCall(options, executionContext, chatRequest);
+  if (directReplyAgentCall) {
+    const directReplyResult = await directReplyAgentCall();
+    if (directReplyResult) {
+      void schedulePersonaMemoryWriteback({
+        ...options,
+        promptProfileSnapshot
+      }, {
+        sourceMode: 'direct-agent',
+        triggerKind: trigger.kind,
+        promptKey: promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '',
+        promptLabel: promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+        replyText: directReplyResult.replyText,
+        currentMessage: trigger.cleanedContent || trigger.rawContent || '',
+        channelId: trigger.channelId || session.channelId || '',
+        userId: trigger.userId || session.userId || '',
+        username: trigger.username || session.username || '',
+        sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+        timestamp: trigger.timestamp || Date.now(),
+        roundId: trigger.messageId || session.messageId || ''
+      });
+      return directReplyResult;
+    }
   }
 
   const workflowResult = await handleWorkflowTrigger(
@@ -236,12 +418,34 @@ async function invokeWorkflowChat(options = {}) {
     executionContext,
     {
       protocolRequest: chatRequest.protocolRequest,
-      availableTools: Array.isArray(options.availableTools)
-        ? options.availableTools
-        : toolRegistry.list({ workflowVisibleOnly: true }),
+      availableTools,
+      visibleSkills: Array.isArray(options.visibleSkills) ? options.visibleSkills : [],
       sendFallbackOnError: template?.sendFallbackOnError !== false
     }
   );
+
+  if (workflowResult?.decision?.status === 'final') {
+    const replyText = extractWorkflowReplyText(workflowResult);
+    if (replyText) {
+      void schedulePersonaMemoryWriteback({
+        ...options,
+        promptProfileSnapshot
+      }, {
+        sourceMode: 'workflow-chat',
+        triggerKind: trigger.kind,
+        promptKey: promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '',
+        promptLabel: promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+        replyText,
+        currentMessage: trigger.cleanedContent || trigger.rawContent || '',
+        channelId: trigger.channelId || session.channelId || '',
+        userId: trigger.userId || session.userId || '',
+        username: trigger.username || session.username || '',
+        sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+        timestamp: trigger.timestamp || Date.now(),
+        roundId: trigger.messageId || session.messageId || ''
+      });
+    }
+  }
 
   return {
     mode: options.resultMode || 'workflow-chat',
@@ -267,6 +471,7 @@ async function handleHybridMentionMessage(options = {}) {
     legacyChatHandler
   } = options;
   const executionContext = buildExecutionContext(options);
+  const promptProfileSnapshot = options.promptProfileSnapshot || options.promptProfileService?.resolveProfile?.() || null;
   const directToolCall = resolveDirectToolCall(options, executionContext);
 
   if (directToolCall) {
@@ -285,6 +490,23 @@ async function handleHybridMentionMessage(options = {}) {
     await sendReplyThroughRuntime(outputRuntime, executionContext, replyTextRaw, {
       useMemePipeline: true
     });
+    void schedulePersonaMemoryWriteback({
+      ...options,
+      promptProfileSnapshot
+    }, {
+      sourceMode: 'hybrid-chat',
+      triggerKind: trigger.kind,
+      promptKey: promptProfileSnapshot?.activePrompt || promptProfileSnapshot?.activePromptFile?.key || '',
+      promptLabel: promptProfileSnapshot?.styleLabel || promptProfileSnapshot?.activePromptFile?.label || '',
+      replyText: replyTextRaw,
+      currentMessage: trigger.cleanedContent || trigger.rawContent || '',
+      channelId: trigger.channelId || session.channelId || '',
+      userId: trigger.userId || session.userId || '',
+      username: trigger.username || session.username || '',
+      sourceScope: trigger.isPrivateSession === true ? 'private' : 'public',
+      timestamp: trigger.timestamp || Date.now(),
+      roundId: trigger.messageId || session.messageId || ''
+    });
     return {
       mode: 'hybrid-chat',
       replyText: replyTextRaw
@@ -299,10 +521,15 @@ async function handleHybridMentionMessage(options = {}) {
 
 module.exports = {
   extractKeywordArgs,
+  isSilentWorkflowFailureReason,
+  shouldSuppressWorkflowFallback,
   sendReplyThroughRuntime,
+  extractWorkflowReplyText,
+  schedulePersonaMemoryWriteback,
   buildExecutionContext,
   resolveConversationContext,
   resolveDirectToolCall,
+  resolveDirectReplyAgentCall,
   invokeWorkflowChat,
   handleWorkflowTrigger,
   handleWorkflowMentionMessage,

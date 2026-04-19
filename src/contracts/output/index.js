@@ -6,6 +6,12 @@
 const { generateRequestId } = require('../../utils/json-utils');
 
 const OUTPUT_KINDS = ['reply.current', 'message.route', 'media.music.send'];
+const OUTPUT_RENDER_MODES = ['plain', 'markdown'];
+
+function normalizeRenderMode(value, fallback = 'plain') {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return OUTPUT_RENDER_MODES.includes(mode) ? mode : fallback;
+}
 
 function normalizeOutputOperation(input = {}) {
   const kind = OUTPUT_KINDS.includes(input.kind) ? input.kind : 'reply.current';
@@ -29,7 +35,8 @@ function normalizeOutputOperation(input = {}) {
     content: {
       text: typeof content.text === 'string' ? content.text : '',
       emotion: typeof content.emotion === 'string' ? content.emotion : '',
-      useMemePipeline: content.useMemePipeline === true
+      useMemePipeline: content.useMemePipeline === true,
+      renderMode: normalizeRenderMode(content.renderMode)
     },
     options: {
       recordConversation: options.recordConversation !== false
@@ -40,5 +47,7 @@ function normalizeOutputOperation(input = {}) {
 
 module.exports = {
   OUTPUT_KINDS,
+  OUTPUT_RENDER_MODES,
+  normalizeRenderMode,
   normalizeOutputOperation
 };
