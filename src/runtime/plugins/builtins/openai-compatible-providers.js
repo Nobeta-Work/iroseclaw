@@ -39,9 +39,14 @@ module.exports = {
         model: providerConfig.model,
         endpointPath: providerConfig.endpointPath,
         headers: providerConfig.headers,
+        headerOverrides: providerConfig.headerOverrides || providerConfig.requestHeaders,
         extraBody: providerConfig.extraBody,
         timeout: providerConfig.timeout,
         maxTokens: providerConfig.maxTokens,
+        thinking: providerConfig.thinking,
+        responseMode: providerConfig.responseMode,
+        jsonMode: providerConfig.jsonMode,
+        allowEmptyFinal: providerConfig.allowEmptyFinal,
         logger: logger || console
       }));
     }

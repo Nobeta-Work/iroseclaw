@@ -7,6 +7,7 @@ data/
 logs/
 dist/
 .openclaw/
+.claude/
 memory/
 AGENTS.md
 HEARTBEAT.md
@@ -14,4 +15,6 @@ SOUL.md
 USER.md
 TOOLS.md
 IDENTITY.md
+MEMORY.md
 docs/
+tests/

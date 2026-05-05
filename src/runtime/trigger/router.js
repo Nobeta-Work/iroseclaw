@@ -5,6 +5,7 @@
 
 const { isSameUid } = require('../../utils/uid');
 const {
+  escapeRegExp,
   isBotMentioned,
   cleanBotMentionContent
 } = require('../../utils/bot-mention');
@@ -36,10 +37,43 @@ function cleanMentionContent(content, botProfile = {}) {
   return cleanBotMentionContent(content, botProfile);
 }
 
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [...new Set(
+    value
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function isAsciiKeyword(keyword = '') {
+  return /^[A-Za-z0-9_]+$/u.test(String(keyword || '').trim());
+}
+
+function isReferenceKeywordMatch(content = '', keyword = '') {
+  const text = String(content || '');
+  const normalizedKeyword = String(keyword || '').trim();
+  if (!text || !normalizedKeyword) {
+    return false;
+  }
+
+  if (!isAsciiKeyword(normalizedKeyword)) {
+    return text.includes(normalizedKeyword);
+  }
+
+  const escaped = escapeRegExp(normalizedKeyword);
+  const pattern = new RegExp(`(^|[^A-Za-z0-9_])${escaped}($|[^A-Za-z0-9_])`, 'i');
+  return pattern.test(text);
+}
+
 class TriggerRouter {
   constructor(options = {}) {
     this.botProfile = options.botProfile || {};
     this.adminUids = Array.isArray(options.adminUids) ? [...options.adminUids] : [];
+    this.referenceKeywords = normalizeStringArray(options.referenceKeywords);
   }
 
   routeMessage(session) {
@@ -51,9 +85,18 @@ class TriggerRouter {
     const timestamp = extractSessionTimestamp(session);
     const isPrivateSession = typeof channelId === 'string' && channelId.startsWith('private:');
     const isAdminSender = this.adminUids.some(uid => isSameUid(uid, userId));
-    const isMentioned = this._isMentioned(session, content, isPrivateSession, isAdminSender);
+    const botUid = String(this.botProfile?.uid || '').trim();
+    const isBotSelf = botUid && isSameUid(userId, botUid);
+    const referenceKeyword = isBotSelf ? '' : this._findReferenceKeyword(content);
+    const isReferenceTriggered = Boolean(referenceKeyword);
+    const isMentioned = this._isMentioned(session, content, isPrivateSession, isAdminSender, isReferenceTriggered);
     const cleanedContent = isMentioned
-      ? cleanMentionContent(content, this.botProfile)
+      ? this._cleanTriggeredContent(content, {
+          isReferenceTriggered,
+          referenceKeyword,
+          isPrivateSession,
+          isAdminSender
+        })
       : content.trim();
 
     if (isPrivateSession && !isAdminSender) {
@@ -64,6 +107,30 @@ class TriggerRouter {
         isPrivateSession,
         isAdminSender,
         isMentioned: false,
+        isReferenceTriggered,
+        referenceKeyword,
+        rawContent: content,
+        cleanedContent,
+        content,
+        userId,
+        username,
+        channelId,
+        messageId,
+        timestamp,
+        session
+      };
+    }
+
+    if (isBotSelf) {
+      return {
+        kind: 'message.mentioned',
+        shouldHandle: false,
+        blockedReason: 'bot_self',
+        isPrivateSession,
+        isAdminSender,
+        isMentioned: false,
+        isReferenceTriggered: false,
+        referenceKeyword: '',
         rawContent: content,
         cleanedContent,
         content,
@@ -81,9 +148,11 @@ class TriggerRouter {
       shouldHandle: isMentioned,
       blockedReason: '',
       isPrivateSession,
-      isAdminSender,
-      isMentioned,
-      rawContent: content,
+        isAdminSender,
+        isMentioned,
+        isReferenceTriggered,
+        referenceKeyword,
+        rawContent: content,
       cleanedContent,
       content,
       userId,
@@ -123,8 +192,38 @@ class TriggerRouter {
     };
   }
 
-  _isMentioned(session, content, isPrivateSession, isAdminSender) {
+  _findReferenceKeyword(content) {
+    for (const keyword of this.referenceKeywords) {
+      if (isReferenceKeywordMatch(content, keyword)) {
+        return keyword;
+      }
+    }
+    return '';
+  }
+
+  _cleanTriggeredContent(content, options = {}) {
+    const text = cleanMentionContent(content, this.botProfile);
+    if (options.isReferenceTriggered !== true) {
+      return text;
+    }
+
+    const keyword = String(options.referenceKeyword || '').trim();
+    if (!keyword) {
+      return text;
+    }
+
+    const escaped = escapeRegExp(keyword);
+    const removed = text
+      .replace(new RegExp(`^${escaped}[\\s,，:：-]*`, 'i'), '')
+      .trim();
+    return removed || text;
+  }
+
+  _isMentioned(session, content, isPrivateSession, isAdminSender, isReferenceTriggered = false) {
     if (isPrivateSession && isAdminSender) {
+      return true;
+    }
+    if (isReferenceTriggered) {
       return true;
     }
 

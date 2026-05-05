@@ -21,7 +21,12 @@ const normalizeUid = (uid) => {
  */
 const isSameUid = (a, b) => {
   if (!a || !b) return false;
-  return normalizeUid(a) === normalizeUid(b);
+  const left = normalizeUid(a);
+  const right = normalizeUid(b);
+  if (left === right) return true;
+  if (left.startsWith('y') && left.slice(1) === right) return true;
+  if (right.startsWith('y') && right.slice(1) === left) return true;
+  return false;
 };
 
 /**

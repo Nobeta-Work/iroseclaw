@@ -5,6 +5,7 @@
 
 const { buildContextPrompt } = require('./workflow/prompt/serializers');
 const { buildPromptProfileLines, resolvePromptProfile } = require('./workflow/prompt/compiler');
+const { isSilentReplyToken } = require('../contracts/workflow');
 const { containsMarkdownCodeFence } = require('../utils/iirose-markdown');
 
 function normalizeText(value, max = 120000) {
@@ -85,6 +86,13 @@ function looksLikeCodeBody(text = '') {
 function normalizeDirectReplyText(replyText = '', requestText = '') {
   const text = normalizeText(replyText);
   if (!text) {
+    return {
+      text: '',
+      renderMode: 'plain'
+    };
+  }
+
+  if (isSilentReplyToken(text)) {
     return {
       text: '',
       renderMode: 'plain'

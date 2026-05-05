@@ -17,7 +17,8 @@ module.exports = {
           listSkills: () => host.skillManager?.list?.() || [],
           listTools: () => host.toolRegistry.list({ workflowVisibleOnly: true }),
           listPackages: () => host.listToolPackages(),
-          runtimeConfig: context.config || {}
+          runtimeConfig: context.config || {},
+          getActiveModeService: () => host.getService('active-mode')
         })
       ],
       skills: [

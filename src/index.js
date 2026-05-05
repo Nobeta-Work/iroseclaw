@@ -46,7 +46,9 @@ const iiroseRoomPlugin = require('./runtime/plugins/iirose/room');
 const iiroseAdminFollowRoomPlugin = require('./runtime/plugins/iirose/admin-follow-room');
 const iiroseInteractionProbePlugin = require('./runtime/plugins/iirose/interaction-probe');
 const proactiveTopicEngagementPlugin = require('./runtime/plugins/proactive/topic-engagement');
+const activeModeManagementPlugin = require('./runtime/plugins/builtins/active-mode-management');
 const remoteRoomMonitoringPlugin = require('./runtime/plugins/monitoring/remote-room-monitoring');
+const { createActiveModeService } = require('./runtime/active-mode/service');
 const { BaseWorkflowPlanner } = require('./runtime/workflow/planners/base-planner');
 const { LlmWorkflowPlanner } = require('./runtime/workflow/planners/llm-workflow-planner');
 const { WorkflowHookRegistry } = require('./runtime/workflow/hooks/registry');
@@ -130,6 +132,41 @@ function resolveOpenClawAgentLabel(finalConfig = {}) {
     || 'iirose-transport';
 }
 
+function resolveActiveModeConfig(finalConfig = {}) {
+  const workflowActiveMode = finalConfig.workflow?.activeMode && typeof finalConfig.workflow.activeMode === 'object'
+    ? finalConfig.workflow.activeMode
+    : {};
+  const pluginActiveMode = finalConfig.pluginConfigs?.proactiveTopicEngagement
+    || finalConfig.pluginConfigs?.['proactive-topic-engagement']
+    || finalConfig.pluginConfigs?.activeMode
+    || {};
+
+  return {
+    ...workflowActiveMode,
+    ...pluginActiveMode
+  };
+}
+
+function buildReferenceAwareTriggerTemplate(template = {}, trigger = {}) {
+  if (!template || typeof template !== 'object') {
+    return template;
+  }
+
+  if (trigger?.isReferenceTriggered !== true) {
+    return template;
+  }
+
+  const baseInstruction = typeof template.instruction === 'string' ? template.instruction.trim() : '';
+  const referenceInstruction = '当前触发来自响应关键词，不一定是在直接呼唤你；请结合上下文判断是否介入。';
+
+  return {
+    ...template,
+    instruction: baseInstruction
+      ? `${baseInstruction}\n${referenceInstruction}`
+      : referenceInstruction
+  };
+}
+
 function requiresLegacyAdapter(finalConfig) {
   const runtimeMode = finalConfig?.runtime?.mode || 'legacy';
   if (runtimeMode === 'legacy') {
@@ -172,6 +209,35 @@ function resolveModelProvider(finalConfig, context = {}) {
     ? finalConfig.providers.named
     : {};
   const namedProviderConfig = namedProviders[providerName];
+  const namedProviderType = typeof namedProviderConfig?.type === 'string'
+    ? namedProviderConfig.type.trim().toLowerCase()
+    : 'openai-compatible';
+
+  if (
+    namedProviderConfig &&
+    typeof namedProviderConfig === 'object' &&
+    namedProviderConfig.enabled !== false &&
+    (namedProviderType === 'openai-compatible' || namedProviderType === 'openai')
+  ) {
+    return new OpenAICompatibleProvider({
+      provider: providerName,
+      label: providerName,
+      baseUrl: namedProviderConfig.baseUrl,
+      apiKey: namedProviderConfig.apiKey,
+      model: namedProviderConfig.model,
+      endpointPath: namedProviderConfig.endpointPath,
+      headers: namedProviderConfig.headers,
+      headerOverrides: namedProviderConfig.headerOverrides || namedProviderConfig.requestHeaders,
+      extraBody: namedProviderConfig.extraBody,
+      timeout: namedProviderConfig.timeout,
+      maxTokens: namedProviderConfig.maxTokens,
+      thinking: namedProviderConfig.thinking,
+      responseMode: namedProviderConfig.responseMode,
+      jsonMode: namedProviderConfig.jsonMode,
+      allowEmptyFinal: namedProviderConfig.allowEmptyFinal,
+      logger: context.logger || console
+    });
+  }
 
   const registeredProvider = context.host?.getProvider?.(providerName);
   if (registeredProvider) {
@@ -192,21 +258,6 @@ function resolveModelProvider(finalConfig, context = {}) {
 
   if (providerName === 'mock') {
     return new MockProvider();
-  }
-
-  if (namedProviderConfig && typeof namedProviderConfig === 'object' && namedProviderConfig.enabled !== false) {
-    return new OpenAICompatibleProvider({
-      provider: providerName,
-      label: providerName,
-      baseUrl: namedProviderConfig.baseUrl,
-      apiKey: namedProviderConfig.apiKey,
-      model: namedProviderConfig.model,
-      endpointPath: namedProviderConfig.endpointPath,
-      headers: namedProviderConfig.headers,
-      extraBody: namedProviderConfig.extraBody,
-      timeout: namedProviderConfig.timeout,
-      maxTokens: namedProviderConfig.maxTokens
-    });
   }
 
   if (providerName === 'openclaw' || providerName === 'openclaw-agent' || !providerName) {
@@ -540,6 +591,7 @@ function apply(ctx, config = {}) {
   pluginHost.registerPlugin(iiroseAdminFollowRoomPlugin);
   pluginHost.registerPlugin(iiroseInteractionProbePlugin);
   pluginHost.registerPlugin(proactiveTopicEngagementPlugin);
+  pluginHost.registerPlugin(activeModeManagementPlugin);
   pluginHost.registerPlugin(remoteRoomMonitoringPlugin);
   logger.INFO('INIT', `Loaded ${skillManager?.list?.().length || 0} built-in skills`);
   logger.INFO('INIT', `Registered ${toolRegistry.list().length} tools`);
@@ -606,8 +658,17 @@ function apply(ctx, config = {}) {
   const bot = finalConfig.bot;
   const triggerRouter = new TriggerRouter({
     botProfile: bot,
-    adminUids
+    adminUids,
+    referenceKeywords: finalConfig.workflow?.activeMode?.reference || []
   });
+  const activeModeService = createActiveModeService({
+    config: resolveActiveModeConfig(finalConfig),
+    logger,
+    botProfile: bot,
+    adminUids,
+    router: triggerRouter
+  });
+  pluginHost.registerService('active-mode', activeModeService);
 
   if (runtimeMode !== 'legacy' && finalConfig.runtime?.eventTriggersEnabled === true) {
     const eventNames = [
@@ -686,6 +747,11 @@ function apply(ctx, config = {}) {
         return;
       }
 
+      // 屏蔽机器人自身消息，防止响应关键字递归触发
+      if (trigger.blockedReason === 'bot_self') {
+        return;
+      }
+
       const storedMessage = contextService.captureIncomingMessage(trigger);
       if (storedMessage && typeof storedMessage === 'object' && storedMessage.globalSharedEventId) {
         trigger.globalSharedEventId = storedMessage.globalSharedEventId;
@@ -699,27 +765,32 @@ function apply(ctx, config = {}) {
         triggerKind: trigger.kind
       };
 
-      if (!isMentioned) return;
-
-      logger.INFO('MSG', `@提及触发：${username}(${userId}): ${content.substring(0, 100)}`);
-
-      if (!cleaned) {
-        if (runtimeMode === 'legacy') {
-          await sendToRoom(session, ctx, '嗯？你想说什么呀~(◕‿◕✿)', {
-            ...replySendOptions
-          });
-        } else {
-          await sendReplyThroughRuntime(outputRuntime, {
-            session,
-            ctx,
-            sendOptions: replySendOptions
-          }, '嗯？你想说什么呀~(◕‿◕✿)');
+      if (!isMentioned) {
+        const activeModeResult = await activeModeService.scheduleMessageEvaluation(session, {
+          ctx,
+          config: finalConfig,
+          contextService,
+          outputRuntime,
+          botProfile: bot,
+          pickFallback,
+          router: triggerRouter,
+          skillManager,
+          toolRegistry,
+          workflowRuntime,
+          triggerTemplateRegistry,
+          runtimeConfig: finalConfig
+        });
+        if (activeModeResult) {
+          return;
         }
         return;
       }
 
+      logger.INFO('MSG', `${trigger.isReferenceTriggered ? '关键词触发' : '@提及触发'}：${username}(${userId}): ${content.substring(0, 100)}`);
+
       if (runtimeMode !== 'legacy') {
         const template = triggerTemplateRegistry.get(trigger.kind);
+        const activeTemplate = buildReferenceAwareTriggerTemplate(template, trigger);
         const availableTools = pluginHost.filterVisibleTools(
           triggerTemplateRegistry.resolveTools(toolRegistry, trigger.kind),
           {
@@ -745,7 +816,7 @@ function apply(ctx, config = {}) {
               pickFallback,
               contextService,
               directReplyAgent,
-              template,
+              template: activeTemplate,
               availableTools,
               visibleSkills,
               promptProfileService,
@@ -783,7 +854,7 @@ function apply(ctx, config = {}) {
               currentEventId: storedMessage?.id,
               availableTools,
               visibleSkills,
-              template,
+              template: activeTemplate,
               promptProfileService,
               promptProfileSnapshot,
               promptMemoryService,
@@ -919,6 +990,7 @@ function apply(ctx, config = {}) {
     workflowPlanner,
     workflowOrchestrator,
     workflowRuntime,
+    activeModeService,
     runtimeMode,
     reload() { logger.INFO('RELOAD', 'Reloading plugin...'); },
     getSkills() { return skillManager?.list?.() || []; },

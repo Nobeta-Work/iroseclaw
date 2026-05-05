@@ -1,7 +1,7 @@
 {
   "bot": {
     "uid": "YOUR_BOT_UID",
-    "name": "Yesα",
+    "name": "YourBotName",
     "platform": "iirose"
   },
   "roomId": "YOUR_ROOM_ID",
@@ -43,8 +43,8 @@
     "eventTriggersEnabled": false
   },
   "workflow": {
-    "maxSteps": 6,
-    "maxToolCallsPerStep": 4,
+    "maxSteps": 8,
+    "maxToolCallsPerStep": 6,
     "allowParallelReadTools": true,
     "maxProviderRetries": 2,
     "promptProfile": {
@@ -61,6 +61,21 @@
       "splitDelimiter": "/",
       "typingDelayPerCharMs": 300,
       "maxTypingDelayMs": 5000
+    },
+    "activeMode": {
+      "mode": "none",
+      "reference": [],
+      "company": [],
+      "windowMs": 45000,
+      "minMessages": 4,
+      "minParticipants": 2,
+      "maxAverageGapMs": 18000,
+      "maxSpeakerRatio": 0.75,
+      "minBotSilenceMs": 45000,
+      "cooldownMs": 180000,
+      "maxPromptMessages": 10,
+      "includeRooms": [],
+      "excludeRooms": []
     }
   },
   "workflowRunLog": {
@@ -90,20 +105,20 @@
         "type": "openai-compatible",
         "baseUrl": "https://api.example.com/v1",
         "apiKey": "YOUR_API_KEY",
-        "model": "deepseek-v3.2",
+        "model": "gpt-4.1-mini",
         "timeout": 30000,
         "enabled": false
       },
       "faramita": {
         "type": "openai-compatible",
         "baseUrl": "https://api.faramita.online/v1",
-        "apiKey": "YOUR_FARAMITA_API_KEY",
+        "apiKey": "YOUR_MODELSCOPE_API_KEY",
         "model": "free-chat",
         "extraBody": {
           "enable_thinking": false
         },
         "timeout": 120000,
-        "enabled": true
+        "enabled": false
       }
     }
   },
@@ -176,8 +191,8 @@
     "perMinute": 60
   },
   "policy": {
-    "allowHighRiskTools": true,
-    "allowCrossSessionSend": true,
+    "allowHighRiskTools": false,
+    "allowCrossSessionSend": false,
     "maxMessagesPerWorkflow": 3
   }
 }

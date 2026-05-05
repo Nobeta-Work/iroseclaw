@@ -8,6 +8,7 @@ const { createToolResult } = require('../../../contracts/tool');
 const { isAdminUser } = require('../../policy/access');
 const { callInternal } = require('../../../services/iirose/internal');
 const { safeParse, extractJson } = require('../../../utils/json-utils');
+const { OpenAICompatibleProvider } = require('../../../ai/providers/openai-compatible-provider');
 
 const DEFAULT_TIME_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_MESSAGE_LIMIT = 50;
@@ -579,6 +580,40 @@ function resolveProviderFactory(host, context, pluginConfig = {}) {
         : (typeof config.providers?.default === 'string' && config.providers.default.trim()
           ? config.providers.default.trim().toLowerCase()
           : 'openclaw'));
+
+    const namedProviderConfig = config.providers?.named && typeof config.providers.named === 'object'
+      ? config.providers.named[providerName]
+      : null;
+    const namedProviderType = typeof namedProviderConfig?.type === 'string'
+      ? namedProviderConfig.type.trim().toLowerCase()
+      : 'openai-compatible';
+
+    if (
+      namedProviderConfig &&
+      typeof namedProviderConfig === 'object' &&
+      namedProviderConfig.enabled !== false &&
+      (namedProviderType === 'openai-compatible' || namedProviderType === 'openai')
+    ) {
+      cachedProvider = new OpenAICompatibleProvider({
+        provider: providerName,
+        label: providerName,
+        baseUrl: namedProviderConfig.baseUrl,
+        apiKey: namedProviderConfig.apiKey,
+        model: namedProviderConfig.model,
+        endpointPath: namedProviderConfig.endpointPath,
+        headers: namedProviderConfig.headers,
+        headerOverrides: namedProviderConfig.headerOverrides || namedProviderConfig.requestHeaders,
+        extraBody: namedProviderConfig.extraBody,
+        timeout: namedProviderConfig.timeout,
+        maxTokens: namedProviderConfig.maxTokens,
+        thinking: namedProviderConfig.thinking,
+        responseMode: namedProviderConfig.responseMode,
+        jsonMode: namedProviderConfig.jsonMode,
+        allowEmptyFinal: namedProviderConfig.allowEmptyFinal,
+        logger
+      });
+      return cachedProvider;
+    }
 
     const registeredProvider = host.getProvider?.(providerName);
     if (!registeredProvider) {

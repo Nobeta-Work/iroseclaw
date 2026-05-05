@@ -1,11 +1,11 @@
 app:
-  nickname: Yesα
+  nickname: YourBotName
   prefix:
     - .
   autoAuthorize: true
 plugins:
-  proxy-agent:agz872: {}
-  http:67s4l2: {}
+  proxy-agent: {}
+  http: {}
   ./src/index:iroseclaw: {}
   koishi-plugin-adapter-iirose:iirose:
     roomId: YOUR_ROOM_ID
@@ -16,4 +16,4 @@ plugins:
     reconnectInterval: 5000
     botStatus: 'n'
     color: rgba(49, 31, 186, 1)
-    signature: 填写你的签名
+    signature: I am a bot

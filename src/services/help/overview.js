@@ -15,12 +15,16 @@ function renderHelpOverview(input = {}) {
   const tools = Array.isArray(input.tools) ? input.tools : [];
   const packages = Array.isArray(input.packages) ? input.packages : [];
   const isAdmin = input.isAdmin === true;
+  const runtimeConfig = input.runtimeConfig && typeof input.runtimeConfig === 'object'
+    ? input.runtimeConfig
+    : {};
 
   const visibleTools = tools
     .filter(isUserVisibleTool)
     .filter(tool => Array.isArray(tool.metadata?.directAliases) && tool.metadata.directAliases.length > 0);
   const packageLabels = collectPackageLabels(packages);
   const userPhrases = collectUserPhrases(visibleTools, packageLabels, skills);
+  const activeModeLines = collectActiveModeLines(runtimeConfig, { isAdmin });
   const adminPhrases = isAdmin
     ? uniquePhrases(
       tools
@@ -34,6 +38,10 @@ function renderHelpOverview(input = {}) {
     lines.push(`🔻示例：${userPhrases.map(item => `\`${item}\``).join('、')}`);
   } else {
     lines.push('🔻示例：`帮助`');
+  }
+
+  if (activeModeLines.length > 0) {
+    lines.push(...activeModeLines);
   }
 
   if (packageLabels.length > 0) {
@@ -52,6 +60,75 @@ function renderHelpOverview(input = {}) {
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+function resolveActiveModeConfig(runtimeConfig = {}) {
+  const workflowActiveMode = runtimeConfig.workflow?.activeMode && typeof runtimeConfig.workflow.activeMode === 'object'
+    ? runtimeConfig.workflow.activeMode
+    : {};
+  const topLevelActiveMode = runtimeConfig.activeMode && typeof runtimeConfig.activeMode === 'object'
+    ? runtimeConfig.activeMode
+    : {};
+
+  return Object.keys(workflowActiveMode).length > 0 ? workflowActiveMode : topLevelActiveMode;
+}
+
+function normalizeActiveModeMode(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (['companion', 'company', '伴随模式', '伴随', '陪伴模式'].includes(text)) {
+    return '伴随模式';
+  }
+  if (['high', 'high-intervention', '高介入模式', '高介入'].includes(text)) {
+    return '高介入模式';
+  }
+  return '无介入模式';
+}
+
+const ACTIVE_MODE_LABELS = ['无介入模式', '伴随模式', '高介入模式'];
+
+function collectActiveModeLines(runtimeConfig = {}, options = {}) {
+  const activeMode = resolveActiveModeConfig(runtimeConfig);
+  const referenceKeywords = uniquePhrases(
+    Array.isArray(activeMode.reference) ? activeMode.reference : []
+  );
+  const company = uniquePhrases(Array.isArray(activeMode.company) ? activeMode.company : []);
+
+  if (Object.keys(activeMode).length === 0) {
+    return [];
+  }
+
+  const lines = [
+    `🔻主动模式：${normalizeActiveModeMode(activeMode.mode)}`
+  ];
+
+  lines.push(
+    `🔻可选模式：${ACTIVE_MODE_LABELS.join('、')}`
+  );
+
+  lines.push(
+    `🔻触发方式：@ / 关键词 / 引用；主动介入由模式和窗口条件控制`
+  );
+
+  lines.push(
+    `🔻响应关键词：${referenceKeywords.length > 0 ? referenceKeywords.join('、') : '无'}`
+  );
+
+  if (company.length > 0) {
+    lines.push(options.isAdmin === true
+      ? `🔻陪伴列表：${company.join('、')}`
+      : `🔻陪伴列表：已配置 ${company.length} 人`);
+  } else {
+    lines.push('🔻陪伴列表：未配置');
+  }
+
+  const minMessages = Number(activeMode.minMessages || 0);
+  const minParticipants = Number(activeMode.minParticipants || 0);
+  const windowMs = Number(activeMode.windowMs || 0);
+  if (minMessages > 0 && minParticipants > 0 && windowMs > 0) {
+    lines.push(`🔻主动窗口：${minMessages} 条消息 / ${minParticipants} 人 / ${Math.round(windowMs / 1000)} 秒`);
+  }
+
+  return lines;
 }
 
 function isUserVisibleTool(tool = {}) {

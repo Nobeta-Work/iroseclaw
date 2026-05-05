@@ -27,6 +27,49 @@ function normalizeHeaders(headers = {}) {
   return normalized;
 }
 
+function mergeHeaders(...sources) {
+  const merged = new Map();
+
+  for (const source of sources) {
+    const normalized = normalizeHeaders(source);
+    for (const [key, value] of Object.entries(normalized)) {
+      merged.set(key.toLowerCase(), [key, value]);
+    }
+  }
+
+  return Object.fromEntries(merged.values());
+}
+
+function normalizeResponseMode(value) {
+  const text = normalizeText(value, 64).toLowerCase();
+  if (text === 'responses' || text === 'response') {
+    return 'responses';
+  }
+  return 'chat_completions';
+}
+
+function normalizeThinkingMode(value) {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+
+  const text = normalizeText(value, 64).toLowerCase();
+  if (!text) return '';
+  if (['off', 'disable', 'disabled', 'false', '0'].includes(text)) {
+    return 'off';
+  }
+  if (['on', 'enable', 'enabled', 'true', '1'].includes(text)) {
+    return 'on';
+  }
+  if (['auto', 'default'].includes(text)) {
+    return 'auto';
+  }
+  return text;
+}
+
+function normalizeFinishReason(value) {
+  return normalizeText(value, 64).toLowerCase();
+}
+
 function normalizeExtraBody(value) {
   if (value === null) {
     return null;
@@ -175,6 +218,95 @@ function extractTextFromResponse(payload = {}) {
   return '';
 }
 
+function extractResponseDiagnostics(payload = {}) {
+  const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
+  const message = choice?.message && typeof choice.message === 'object' ? choice.message : {};
+  const outputItems = Array.isArray(payload?.output) ? payload.output : [];
+  const finishReasons = [];
+
+  if (typeof choice?.finish_reason === 'string' && choice.finish_reason.trim()) {
+    finishReasons.push(normalizeFinishReason(choice.finish_reason));
+  }
+
+  for (const item of outputItems) {
+    if (typeof item?.finish_reason === 'string' && item.finish_reason.trim()) {
+      finishReasons.push(normalizeFinishReason(item.finish_reason));
+    }
+  }
+
+  const refusal = typeof message.refusal === 'string' ? message.refusal.trim() : '';
+  const toolCalls = Array.isArray(message.tool_calls)
+    ? message.tool_calls.filter(item => item && typeof item === 'object')
+    : [];
+  const text = extractTextFromResponse(payload);
+
+  return {
+    text,
+    refusal,
+    toolCalls,
+    finishReasons,
+    hasStructuredResponse: Boolean(
+      Array.isArray(payload?.choices)
+      || Array.isArray(payload?.output)
+      || typeof payload?.output_text === 'string'
+      || refusal
+      || toolCalls.length > 0
+    )
+  };
+}
+
+function classifyResponsePayload(payload = {}, options = {}) {
+  const diagnostics = extractResponseDiagnostics(payload);
+  const allowEmptyFinal = options.allowEmptyFinal === true;
+  const nonTerminalFinishReason = diagnostics.finishReasons.find(reason => !['stop', 'completed', 'end_turn'].includes(reason));
+
+  if (diagnostics.refusal) {
+    return {
+      ok: false,
+      error: 'provider returned refusal without final text',
+      diagnostics
+    };
+  }
+
+  if (diagnostics.toolCalls.length > 0) {
+    return {
+      ok: false,
+      error: 'provider returned tool_calls without final text',
+      diagnostics
+    };
+  }
+
+  if (nonTerminalFinishReason) {
+    return {
+      ok: false,
+      error: 'provider returned incomplete structured output',
+      diagnostics
+    };
+  }
+
+  if (!diagnostics.text) {
+    if (allowEmptyFinal) {
+      return {
+        ok: true,
+        text: '',
+        diagnostics
+      };
+    }
+
+    return {
+      ok: false,
+      error: 'provider returned empty output',
+      diagnostics
+    };
+  }
+
+  return {
+    ok: true,
+    text: diagnostics.text,
+    diagnostics
+  };
+}
+
 function stringifyErrorPayload(payload) {
   if (!payload) return '';
   if (typeof payload === 'string') return payload.trim();
@@ -223,15 +355,23 @@ function isRetryableFetchError(error) {
 class OpenAICompatibleProvider extends BaseModelProvider {
   constructor(options = {}) {
     super(options);
+    const responseMode = normalizeResponseMode(options.responseMode);
     this.config = {
       baseUrl: normalizeText(options.baseUrl, 4000).replace(/\/+$/, ''),
       apiKey: normalizeText(options.apiKey, 4000),
       model: normalizeText(options.model, 200),
-      endpointPath: normalizeText(options.endpointPath, 200) || '/chat/completions',
+      responseMode,
+      thinking: normalizeThinkingMode(options.thinking),
+      jsonMode: normalizeText(options.jsonMode, 32).toLowerCase() || 'strict',
+      allowEmptyFinal: options.allowEmptyFinal === true,
+      endpointPath: normalizeText(options.endpointPath, 200) || (responseMode === 'responses'
+        ? '/responses'
+        : '/chat/completions'),
       timeout: Number.isFinite(Number(options.timeout))
         ? Math.max(1000, Math.floor(Number(options.timeout)))
         : 30000,
       headers: normalizeHeaders(options.headers),
+      headerOverrides: normalizeHeaders(options.headerOverrides || options.requestHeaders),
       extraBody: isPlainObject(options.extraBody) ? normalizeExtraBody(options.extraBody) : {},
       maxTokens: Number.isFinite(Number(options.maxTokens))
         ? Math.max(0, Math.floor(Number(options.maxTokens)))
@@ -253,28 +393,43 @@ class OpenAICompatibleProvider extends BaseModelProvider {
     return `${this.config.baseUrl}${endpoint}`;
   }
 
-  _buildHeaders() {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...this.config.headers
-    };
-
-    if (this.config.apiKey) {
-      headers.Authorization = `Bearer ${this.config.apiKey}`;
-    }
-
-    return headers;
+  _buildHeaders(input = {}) {
+    return mergeHeaders(
+      {
+        'Content-Type': 'application/json'
+      },
+      this.config.apiKey ? {
+        Authorization: `Bearer ${this.config.apiKey}`
+      } : {},
+      this.config.headers,
+      isPlainObject(input.headers) ? input.headers : {},
+      this.config.headerOverrides,
+      isPlainObject(input.headerOverrides) ? input.headerOverrides : {}
+    );
   }
 
   _buildBody(input = {}) {
+    const messages = buildMessages(input);
     const body = {
       model: normalizeText(input.model, 200) || this.config.model,
-      messages: buildMessages(input),
       ...this.config.extraBody,
       ...(isPlainObject(input.extraBody) ? normalizeExtraBody(input.extraBody) : {})
     };
 
-    if (input.json === true) {
+    const thinkingMode = normalizeThinkingMode(input.thinking) || this.config.thinking;
+    if (thinkingMode === 'off') {
+      body.enable_thinking = false;
+    } else if (thinkingMode === 'on') {
+      body.enable_thinking = true;
+    }
+
+    if (this.config.responseMode === 'responses') {
+      body.input = messages;
+    } else {
+      body.messages = messages;
+    }
+
+    if (input.json === true && this.config.jsonMode !== 'off') {
       body.response_format = { type: 'json_object' };
     }
 
@@ -317,6 +472,7 @@ class OpenAICompatibleProvider extends BaseModelProvider {
     }
 
     const body = this._buildBody(input);
+    const headers = this._buildHeaders(input);
     if (!body.model) {
       return {
         ok: false,
@@ -329,7 +485,10 @@ class OpenAICompatibleProvider extends BaseModelProvider {
         error: 'model is required'
       };
     }
-    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    const requestMessages = this.config.responseMode === 'responses'
+      ? body.input
+      : body.messages;
+    if (!Array.isArray(requestMessages) || requestMessages.length === 0) {
       return {
         ok: false,
         provider: this.label,
@@ -354,7 +513,7 @@ class OpenAICompatibleProvider extends BaseModelProvider {
       try {
         const response = await this.fetchImpl(url, {
           method: 'POST',
-          headers: this._buildHeaders(),
+          headers,
           body: JSON.stringify(body),
           signal: controller.signal
         });
@@ -378,15 +537,44 @@ class OpenAICompatibleProvider extends BaseModelProvider {
             raw: {
               url,
               request: body,
+              requestHeaders: headers,
               status: response.status,
               statusText: response.statusText,
-              text
+              text,
+              response: payload,
+              diagnostics: extractResponseDiagnostics(payload)
             },
             error: `HTTP ${response.status}: ${stringifyErrorPayload(payload) || response.statusText || text || 'request failed'}`
           };
         }
 
-        const replyText = extractTextFromResponse(payload || {});
+        const classification = classifyResponsePayload(payload || {}, {
+          allowEmptyFinal: this.config.allowEmptyFinal
+        });
+
+        if (!classification.ok) {
+          return {
+            ok: false,
+            provider: this.label,
+            text: '',
+            jsonText: '',
+            plainText: '',
+            json: payload,
+            raw: {
+              url,
+              request: body,
+              requestHeaders: headers,
+              status: response.status,
+              statusText: response.statusText,
+              text,
+              response: payload,
+              diagnostics: classification.diagnostics
+            },
+            error: classification.error
+          };
+        }
+
+        const replyText = classification.text || '';
         return {
           ok: true,
           provider: this.label,
@@ -397,9 +585,12 @@ class OpenAICompatibleProvider extends BaseModelProvider {
           raw: {
             url,
             request: body,
+            requestHeaders: headers,
             status: response.status,
             statusText: response.statusText,
-            text
+            text,
+            response: payload,
+            diagnostics: classification.diagnostics
           },
           error: ''
         };
@@ -423,6 +614,7 @@ class OpenAICompatibleProvider extends BaseModelProvider {
       raw: {
         url,
         request: body,
+        requestHeaders: headers,
         cause: lastError?.cause
           ? {
               code: lastError.cause.code || '',

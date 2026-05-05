@@ -14,6 +14,27 @@ function createHelpOverviewTool(options = {}) {
   const runtimeConfig = options.runtimeConfig && typeof options.runtimeConfig === 'object'
     ? options.runtimeConfig
     : {};
+  const getActiveModeService = typeof options.getActiveModeService === 'function'
+    ? options.getActiveModeService
+    : () => null;
+
+  function resolveActiveModeConfigForHelp() {
+    const service = getActiveModeService();
+    if (!service) return runtimeConfig;
+    const status = service.getStatus();
+    const mode = status.mode || 'none';
+    return {
+      ...runtimeConfig,
+      workflow: {
+        ...(runtimeConfig.workflow || {}),
+        activeMode: {
+          ...(runtimeConfig.workflow?.activeMode || {}),
+          mode,
+          updatedAt: status.updatedAt || status.lastInterventionAt || 0
+        }
+      }
+    };
+  }
 
   return {
     name: 'help.show',
@@ -42,11 +63,13 @@ function createHelpOverviewTool(options = {}) {
     async execute(context = {}) {
       const userId = context.session?.userId || context.userId || '';
       const admin = isAdminUser(runtimeConfig, userId);
+      const effectiveConfig = resolveActiveModeConfigForHelp();
       const helpText = renderHelpOverview({
         skills: listSkills(),
         tools: listTools(),
         packages: listPackages(),
-        isAdmin: admin
+        isAdmin: admin,
+        runtimeConfig: effectiveConfig
       });
 
       return createToolResult({

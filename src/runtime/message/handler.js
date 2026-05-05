@@ -4,6 +4,7 @@
  */
 
 const { buildChatProtocolRequest } = require('../workflow/chat-request');
+const { isSilentReplyToken } = require('../../contracts/workflow');
 
 function extractKeywordArgs(message, aliases = []) {
   const text = typeof message === 'string' ? message.trim() : '';
@@ -11,20 +12,22 @@ function extractKeywordArgs(message, aliases = []) {
     return { query: '', keyword: '', song: '', raw: '' };
   }
 
+  let query = text;
   let raw = text;
   for (const alias of aliases) {
     const normalizedAlias = String(alias || '').trim();
     if (!normalizedAlias) continue;
     if (text.toLowerCase().startsWith(normalizedAlias.toLowerCase())) {
-      raw = text.slice(normalizedAlias.length).trim();
+      raw = normalizedAlias;
+      query = text.slice(normalizedAlias.length).trim();
       break;
     }
   }
 
   return {
-    query: raw,
-    keyword: raw,
-    song: raw,
+    query,
+    keyword: query,
+    song: query,
     raw
   };
 }
@@ -121,15 +124,22 @@ function isSilentWorkflowFailureReason(reason = '') {
 
   return (
     normalized.startsWith('provider error:') ||
-    normalized.startsWith('provider error text:') ||
-    normalized.startsWith('invalid workflow decision:') ||
-    normalized.includes('empty direct reply fallback output') ||
-    normalized.includes('agent reply fallback failed')
+    normalized.startsWith('provider error text:')
   );
 }
 
 function shouldSuppressWorkflowFallback(workflowResult = {}) {
   const workflowDecision = workflowResult?.decision;
+  if (workflowDecision?.status === 'final') {
+    if (String(workflowDecision?.finalOutput?.mode || '').trim().toLowerCase() === 'none') {
+      return true;
+    }
+    if (isSilentReplyToken(workflowDecision?.finalOutput?.text || '')) {
+      return true;
+    }
+    return false;
+  }
+
   if (workflowDecision?.status !== 'error') {
     return false;
   }
@@ -265,7 +275,12 @@ function resolveDirectToolCall(options = {}, executionContext = {}) {
 
     const outputResults = await workflowRuntime.handleToolResultsOutput(toolResults, executionContext);
     if (toolResults.some(item => item.ok === false) && outputResults.length === 0) {
-      await sendReplyThroughRuntime(outputRuntime, executionContext, pickFallback());
+      return {
+        mode: 'direct-tool',
+        tool: directTool.name,
+        toolResults,
+        outputResults
+      };
     }
 
     return {

@@ -174,7 +174,10 @@ function buildStandardContextPrompt(protocolRequest = {}) {
     blocks.push(`全局共享已记录 @bot 锚点数: ${globalSharedAnchorCount}`);
   }
 
-  blocks.push('请基于上下文只回复当前需要回复的消息，避免混淆历史话题和用户身份。');
+  blocks.push(
+    '请基于上下文只回复当前需要回复的消息，避免混淆历史话题和用户身份。',
+    '重要：在回复前，检查上方上下文消息中你（BOT）之前的回复。如果当前消息与之前已回复过的内容相似或相同，必须给出不同的回应，严禁复读自己说过的话、用词或句式。'
+  );
   return blocks.join('\n');
 }
 
@@ -228,7 +231,10 @@ function buildNativeContextPrompt(protocolRequest = {}) {
     blocks.push(`全局共享已记录 @bot 锚点数: ${globalSharedAnchorCount}`);
   }
 
-  blocks.push('请只回复当前消息，保持自然、简短、直接。');
+  blocks.push(
+    '请只回复当前消息，保持自然、简短、直接。',
+    '重要：检查系统保留的历史消息中你之前的回复，避免重复自己说过的话、用词或句式。'
+  );
   return blocks.join('\n');
 }
 

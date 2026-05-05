@@ -4,6 +4,7 @@
  */
 
 const { normalizeOutputOperation } = require('../../contracts/output');
+const { isSilentReplyToken } = require('../../contracts/workflow');
 
 class OutputRuntime {
   constructor(options = {}) {
@@ -70,7 +71,8 @@ class OutputRuntime {
 
       if (
         (finalOperation.kind === 'reply.current' || finalOperation.kind === 'message.route') &&
-        !String(finalOperation.content?.text || '').trim()
+        (!String(finalOperation.content?.text || '').trim()
+          || isSilentReplyToken(finalOperation.content?.text || ''))
       ) {
         continue;
       }

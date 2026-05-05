@@ -9,18 +9,56 @@ const { normalizeRenderMode } = require('../output');
 
 const WORKFLOW_STATUSES = ['needs_tools', 'final', 'blocked', 'error'];
 
+function normalizeSilentReplyToken(value = '') {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (/^none$/i.test(trimmed)) {
+    return 'none';
+  }
+
+  const wrapped = trimmed.match(/^`(.+)`$/);
+  if (wrapped && /^none$/i.test(wrapped[1].trim())) {
+    return 'none';
+  }
+
+  return '';
+}
+
+function isSilentReplyToken(value = '') {
+  return normalizeSilentReplyToken(value) === 'none';
+}
+
 function normalizeFinalOutput(output = {}) {
   const operations = Array.isArray(output.operations)
     ? output.operations
       .filter(item => item && typeof item === 'object' && !Array.isArray(item))
       .map(item => ({ ...item }))
     : [];
+  const mode = typeof output.mode === 'string' && output.mode.trim()
+    ? output.mode.trim().toLowerCase()
+    : 'reply';
+  const silentText = isSilentReplyToken(output.text);
+
+  if ((mode === 'none' || silentText) && operations.length === 0) {
+    return {
+      mode: 'none',
+      text: '',
+      renderMode: 'plain',
+      replySegments: [],
+      operations: []
+    };
+  }
 
   return {
-    mode: typeof output.mode === 'string' && output.mode.trim()
-      ? output.mode.trim()
-      : 'reply',
-    text: typeof output.text === 'string' ? output.text : '',
+    mode,
+    text: silentText ? '' : (typeof output.text === 'string' ? output.text : ''),
     renderMode: normalizeRenderMode(output.renderMode),
     replySegments: Array.isArray(output.replySegments) ? [...output.replySegments] : [],
     operations
@@ -103,5 +141,7 @@ module.exports = {
   WORKFLOW_STATUSES,
   createWorkflowEnvelope,
   normalizeStatePatch,
+  normalizeSilentReplyToken,
+  isSilentReplyToken,
   normalizeWorkflowStepDecision
 };

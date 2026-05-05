@@ -3,7 +3,10 @@
  * 使用 provider + framework prompt/decision 协议产出下一步 workflow 决策。
  */
 
-const { normalizeWorkflowStepDecision } = require('../../../contracts/workflow');
+const {
+  normalizeWorkflowStepDecision,
+  isSilentReplyToken
+} = require('../../../contracts/workflow');
 const { BaseWorkflowPlanner } = require('./base-planner');
 const {
   compileWorkflowPrompt,
@@ -35,6 +38,24 @@ function looksLikeProviderErrorText(text = '') {
     normalized.includes('copilot token exchange failed') ||
     normalized.includes('internalerror.')
   );
+}
+
+function normalizeProviderFailureReason(reason = '') {
+  const text = String(reason || '').trim();
+  if (!text) {
+    return 'provider returned empty output';
+  }
+
+  const normalized = text.toLowerCase();
+  if (
+    normalized.startsWith('provider returned ') ||
+    normalized.startsWith('provider error:') ||
+    normalized.startsWith('provider error text:')
+  ) {
+    return text;
+  }
+
+  return `provider error: ${text}`;
 }
 
 function getCurrentRequestText(input = {}) {
@@ -91,6 +112,10 @@ function shouldBypassStructuredDecision(decision = {}, input = {}) {
   }
 
   if (decision.status !== 'final') {
+    return false;
+  }
+
+  if (String(decision.finalOutput?.mode || '').trim().toLowerCase() === 'none') {
     return false;
   }
 
@@ -182,6 +207,25 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
     });
   }
 
+  _buildSilentDecision(providerName = '', reason = 'silent reply token') {
+    return normalizeWorkflowStepDecision({
+      status: 'final',
+      finalOutput: {
+        mode: 'none',
+        text: '',
+        renderMode: 'plain',
+        replySegments: [],
+        operations: []
+      },
+      audit: {
+        reason,
+        blocked: false,
+        planner: this.label,
+        provider: providerName
+      }
+    });
+  }
+
   async _attemptDirectReplyFallback(input = {}, providerName = '', reason = 'agent_reply_fallback') {
     let result = null;
     let replyText = '';
@@ -196,6 +240,13 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
       });
       replyText = this._getDecisionText(result).trim();
       replyProvider = this._getProviderName(result) || providerName;
+      if (result?.ok !== false && isSilentReplyToken(replyText)) {
+        return {
+          ok: true,
+          decision: this._buildSilentDecision(replyProvider, 'silent reply token'),
+          providerName: replyProvider
+        };
+      }
       const retryableFailure = result?.ok === false || looksLikeProviderErrorText(replyText);
       if (!retryableFailure || attempt >= maxRetries) {
         break;
@@ -210,7 +261,7 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
       return {
         ok: false,
         providerName: replyProvider,
-        reason: `provider error: ${result?.error || 'unknown error'}`
+        reason: normalizeProviderFailureReason(result?.error)
       };
     }
 
@@ -318,9 +369,12 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
 
       providerName = this._getProviderName(result);
       const decisionText = this._getDecisionText(result);
+      if (result?.ok !== false && isSilentReplyToken(decisionText)) {
+        return this._buildSilentDecision(providerName, 'silent reply token');
+      }
       const parsed = parseWorkflowDecisionText(decisionText);
       const providerFailureReason = result?.ok === false
-        ? `provider error: ${result.error || 'unknown error'}`
+        ? normalizeProviderFailureReason(result.error)
         : (looksLikeProviderErrorText(decisionText) || looksLikeProviderErrorText(result?.raw?.stdout || '')
           ? `provider error text: ${decisionText.slice(0, 600)}`
           : '');
@@ -369,7 +423,7 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
 
       if (this._shouldRetry(result, parsed, providerName, attempt, maxRetries)) {
         const retryReason = result?.ok === false
-          ? `provider error: ${result.error || 'unknown error'}`
+          ? normalizeProviderFailureReason(result.error)
           : `invalid workflow decision: ${parsed.error || 'empty response'}`;
         this.logger.warn?.(
           `[LlmWorkflowPlanner] retrying provider after attempt ${attempt + 1}: ${retryReason}`
@@ -382,30 +436,41 @@ class LlmWorkflowPlanner extends BaseWorkflowPlanner {
 
     const nonJsonReply = this._getDecisionText(lastResult).trim();
     if (nonJsonReply && !looksLikeProviderErrorText(nonJsonReply)) {
-      this.logger.warn?.('[LlmWorkflowPlanner] decision parse fallback to direct final reply');
-      const fallbackReply = await this._attemptDirectReplyFallback(
+      const requestText = getCurrentRequestText(input);
+      if (looksLikeCodeIntent(requestText) || looksLikeMarkdownIntent(requestText)) {
+        this.logger.warn?.('[LlmWorkflowPlanner] decision parse fallback to direct final reply');
+        const fallbackReply = await this._attemptDirectReplyFallback(
+          input,
+          providerName || fallbackProviderName,
+          'decision_parse_fallback'
+        );
+        if (fallbackReply.ok && fallbackReply.decision) {
+          return fallbackReply.decision;
+        }
+
+        return normalizeWorkflowStepDecision({
+          status: 'error',
+          audit: {
+            reason: 'invalid workflow decision: decision parse fallback failed',
+            blocked: false,
+            planner: this.label,
+            provider: fallbackReply.providerName || providerName || fallbackProviderName
+          }
+        });
+      }
+
+      this.logger.warn?.('[LlmWorkflowPlanner] decision parse fallback to raw final reply');
+      return this._buildDirectReplyDecision(
+        nonJsonReply,
         input,
         providerName || fallbackProviderName,
         'decision_parse_fallback'
       );
-      if (fallbackReply.ok && fallbackReply.decision) {
-        return fallbackReply.decision;
-      }
-
-      return normalizeWorkflowStepDecision({
-        status: 'error',
-        audit: {
-          reason: 'invalid workflow decision: decision parse fallback failed',
-          blocked: false,
-          planner: this.label,
-          provider: fallbackReply.providerName || providerName || fallbackProviderName
-        }
-      });
     }
 
     const reason = lastFailureReason || (
       lastResult?.ok === false
-        ? `provider error: ${lastResult.error || 'unknown error'}`
+        ? normalizeProviderFailureReason(lastResult.error)
         : `invalid workflow decision: ${lastParsed?.error || 'empty response'}`
     );
     this.logger.warn?.(`[LlmWorkflowPlanner] ${reason}`);

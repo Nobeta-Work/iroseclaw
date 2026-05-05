@@ -1,6 +1,13 @@
-# iroseclaw
+# IIroseClaw
 
 IIROSE 聊天室机器人，基于 [Koishi](https://koishi.chat) 扩展 workflow 框架设计。
+
+[开发日志 / 功能介绍](https://faramita.online/bbs/blog/1777959300034f1f9007e5451a989b187e1dd8667a)
+
+*[当前版本 | v0.3.3]*
+
+> 注意：v0.3.3 将作为长期版本稳定一段时间
+> 下一期的计划将修改框架设计，跳到 v1.0.0 版本。
 
 ## 快速开始
 
@@ -107,16 +114,23 @@ npm run restart:bg
 > 情绪表情包没有被控制反转，不受大模型操控。
 
 ### 主动模式
-- 入口：`pluginConfigs.proactive-topic-engagement`
-- `defaultEnabled`：是否默认开启主动介入
-- `defaultModeName`：模式名，展示给管理员看
-- `dataDir` / `settingsFile`：状态存放位置，多实例部署时要分开
-- `windowMs`：统计窗口
-- `minMessages`、`minParticipants`：触发门槛
-- `maxAverageGapMs`、`maxSpeakerRatio`：群聊活跃度阈值
-- `minBotSilenceMs`、`cooldownMs`：避免机器人连续打断
+- 入口：`workflow.activeMode`
+- `mode`：`none` / `companion` / `high`
+- `none`：只响应 `@` / 关键词 / 引用
+- `companion`：仅在陪伴列表成员参与主动条件窗口时介入
+- `high`：任何人的主动条件都可触发
+- `reference`：响应关键词列表
+- `company`：伴随模式下的陪伴列表
+- `windowMs`：统计窗口（毫秒）
+- `minMessages`、`minParticipants`：介入门槛
+- `maxAverageGapMs`：群聊平均消息间隔上限（毫秒）
+- `maxSpeakerRatio`：单一发言人占比上限（0~1）
+- `minBotSilenceMs`：机器人最近静默要求（毫秒）
+- `cooldownMs`：两次介入之间的冷却时间（毫秒）
+- `maxPromptMessages`：一次注入给模型的最近消息数上限
 - `includeRooms` / `excludeRooms`：限定或排除房间
-- 管理指令：`开启主动模式`、`关闭主动模式`、`主动模式状态`、`命名主动模式 茶水间模式`
+- `shouldIntervene`：运行时代码可注入的自定义判定钩子
+- 管理指令：`主动模式`（查看状态）、`无介入模式` / `伴随模式` / `高介入模式`（切换）
 - 建议先单房间试跑，再逐步放开范围
 
 ### 记忆系统

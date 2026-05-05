@@ -14,13 +14,6 @@ function buildChatProtocolRequest(input = {}) {
   const runtimeConfig = input.runtimeConfig && typeof input.runtimeConfig === 'object' ? input.runtimeConfig : {};
   const isPrivate = input.isPrivate === true || (input.channelId || '').startsWith('private:');
 
-  if (!content) {
-    return {
-      ok: false,
-      replyText: '嗯？你想说什么呀~(◕‿◕✿)'
-    };
-  }
-
   const action = 'chat';
   // 私聊且用户在 adminUids 中时，直接视为管理员
   const isAdmin = isPrivate && Array.isArray(runtimeConfig.adminUids) && runtimeConfig.adminUids.some(uid => uid === userId)

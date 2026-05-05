@@ -4,6 +4,7 @@
  */
 
 const { generateRequestId } = require('../utils/json-utils');
+const { isSilentReplyToken } = require('../contracts/workflow');
 
 /**
  * 构建请求对象
@@ -97,8 +98,12 @@ const parseResponse = (raw) => {
     skillName: raw.skillName ?? defaultResponse.skillName,
     skillArgs: raw.skillArgs ?? defaultResponse.skillArgs,
     isSystemRequest: raw.isSystemRequest ?? defaultResponse.isSystemRequest,
-    shouldReply: raw.shouldReply ?? defaultResponse.shouldReply,
-    replyText: raw.replyText ?? defaultResponse.replyText,
+    shouldReply: isSilentReplyToken(raw.replyText || '')
+      ? false
+      : (raw.shouldReply ?? defaultResponse.shouldReply),
+    replyText: isSilentReplyToken(raw.replyText || '')
+      ? ''
+      : (raw.replyText ?? defaultResponse.replyText),
     replySegments: Array.isArray(raw.replySegments) ? raw.replySegments : defaultResponse.replySegments,
     audit: {
       reason: raw.audit?.reason ?? defaultResponse.audit.reason,

@@ -100,6 +100,21 @@ const DEFAULT_CONFIG = {
       splitDelimiter: '/',
       typingDelayPerCharMs: 300,
       maxTypingDelayMs: 5000
+    },
+    activeMode: {
+      mode: 'none',
+      reference: [],
+      company: [],
+      windowMs: 45000,
+      minMessages: 4,
+      minParticipants: 2,
+      maxAverageGapMs: 18000,
+      maxSpeakerRatio: 0.75,
+      minBotSilenceMs: 45000,
+      cooldownMs: 3 * 60 * 1000,
+      maxPromptMessages: 10,
+      includeRooms: [],
+      excludeRooms: []
     }
   },
   workflowRunLog: {
@@ -233,6 +248,27 @@ function parseInteger(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function parseThinkingMode(value) {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!text) {
+    return '';
+  }
+
+  if (['off', 'disable', 'disabled', 'false', '0'].includes(text)) {
+    return 'off';
+  }
+  if (['on', 'enable', 'enabled', 'true', '1'].includes(text)) {
+    return 'on';
+  }
+  if (['auto', 'default'].includes(text)) {
+    return 'auto';
+  }
+  return text;
+}
+
 function normalizePromptStyles(styles = {}, fallbackStyles = {}) {
   const normalized = {};
   const mergedEntries = new Map([
@@ -265,6 +301,61 @@ function normalizePromptStyles(styles = {}, fallbackStyles = {}) {
   }
 
   return normalized;
+}
+
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [...new Set(
+    value
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function normalizeActiveModeMode(value) {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!text) {
+    return DEFAULT_CONFIG.workflow.activeMode.mode;
+  }
+
+  if (['none', 'off', 'disable', 'disabled', 'inactive', '无介入模式', '无介入', '零介入'].includes(text)) {
+    return 'none';
+  }
+  if (['companion', 'company', '伴随模式', '伴随', '陪伴模式'].includes(text)) {
+    return 'companion';
+  }
+  if (['high', 'high-intervention', 'high_intervention', '高介入模式', '高介入'].includes(text)) {
+    return 'high';
+  }
+
+  return DEFAULT_CONFIG.workflow.activeMode.mode;
+}
+
+function normalizeActiveModeConfig(activeMode = {}) {
+  const input = activeMode && typeof activeMode === 'object' && !Array.isArray(activeMode)
+    ? activeMode
+    : {};
+
+  return {
+    mode: normalizeActiveModeMode(input.mode),
+    reference: normalizeStringArray(input.reference),
+    company: normalizeStringArray(input.company),
+    windowMs: Math.max(1, parseInteger(input.windowMs, DEFAULT_CONFIG.workflow.activeMode.windowMs)),
+    minMessages: Math.max(1, parseInteger(input.minMessages, DEFAULT_CONFIG.workflow.activeMode.minMessages)),
+    minParticipants: Math.max(1, parseInteger(input.minParticipants, DEFAULT_CONFIG.workflow.activeMode.minParticipants)),
+    maxAverageGapMs: Math.max(1, parseInteger(input.maxAverageGapMs, DEFAULT_CONFIG.workflow.activeMode.maxAverageGapMs)),
+    maxSpeakerRatio: Number.isFinite(Number(input.maxSpeakerRatio))
+      ? Math.max(0.2, Math.min(1, Number(input.maxSpeakerRatio)))
+      : DEFAULT_CONFIG.workflow.activeMode.maxSpeakerRatio,
+    minBotSilenceMs: Math.max(0, parseInteger(input.minBotSilenceMs, DEFAULT_CONFIG.workflow.activeMode.minBotSilenceMs)),
+    cooldownMs: Math.max(0, parseInteger(input.cooldownMs, DEFAULT_CONFIG.workflow.activeMode.cooldownMs)),
+    maxPromptMessages: Math.max(1, parseInteger(input.maxPromptMessages, DEFAULT_CONFIG.workflow.activeMode.maxPromptMessages)),
+    includeRooms: normalizeStringArray(input.includeRooms),
+    excludeRooms: normalizeStringArray(input.excludeRooms)
+  };
 }
 
 function parseAdmins(adminString) {
@@ -478,6 +569,12 @@ function normalizeConfig(config) {
     parseInteger(normalized.workflow.chatOutput.maxTypingDelayMs, DEFAULT_CONFIG.workflow.chatOutput.maxTypingDelayMs)
   );
 
+  normalized.workflow.activeMode =
+    normalized.workflow.activeMode && typeof normalized.workflow.activeMode === 'object' && !Array.isArray(normalized.workflow.activeMode)
+      ? { ...normalized.workflow.activeMode }
+      : {};
+  normalized.workflow.activeMode = normalizeActiveModeConfig(normalized.workflow.activeMode);
+
   normalized.workflowRunLog = normalized.workflowRunLog || {};
   normalized.workflowRunLog.enabled = normalized.workflowRunLog.enabled !== false;
   normalized.workflowRunLog.dataDir = normalized.workflowRunLog.dataDir || DEFAULT_CONFIG.workflowRunLog.dataDir;
@@ -553,6 +650,7 @@ function normalizeConfig(config) {
               timeout: parseInteger(entry.timeout, DEFAULT_CONFIG.openclaw.timeout),
               maxTokens: parseInteger(entry.maxTokens, 0),
               enabled: entry.enabled !== false,
+              thinking: parseThinkingMode(entry.thinking),
               extraBody: entry.extraBody && typeof entry.extraBody === 'object' && !Array.isArray(entry.extraBody)
                 ? { ...entry.extraBody }
                 : {},

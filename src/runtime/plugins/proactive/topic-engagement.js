@@ -12,7 +12,7 @@ const { TriggerRouter, extractSessionTimestamp } = require('../../trigger/router
 
 const DEFAULT_SETTINGS = {
   enabled: false,
-  modeName: '轻介入模式',
+  modeName: '话题介入模式',
   updatedAt: 0
 };
 
@@ -288,7 +288,7 @@ function createStatusText(status = {}, config = {}) {
     : '暂无';
 
   return [
-    '主动话题介入状态',
+    '话题介入状态',
     `模式名: ${status.modeName || DEFAULT_SETTINGS.modeName}`,
     `开关: ${status.enabled ? '已开启' : '已关闭'}`,
     `最近一次介入: ${lastInterventionAt}`,
@@ -415,6 +415,9 @@ function createTopicEngagementService(options = {}) {
 
   const logger = options.logger || console;
   const settingsStore = options.settingsStore;
+  const getActiveModeService = typeof options.getActiveModeService === 'function'
+    ? options.getActiveModeService
+    : null;
   const state = {
     pendingTasks: new Set(),
     roomStates: new Map()
@@ -448,6 +451,16 @@ function createTopicEngagementService(options = {}) {
   }
 
   async function maybeIntervene(session, context = {}) {
+    const runtimeMode = String(context.config?.runtime?.mode || context.runtimeConfig?.runtime?.mode || '').trim().toLowerCase();
+
+    // Native active-mode now owns proactive intervention in workflow/hybrid modes.
+    if (runtimeMode !== 'legacy' && typeof getActiveModeService === 'function') {
+      const nativeActiveMode = getActiveModeService();
+      if (nativeActiveMode && typeof nativeActiveMode.getStatus === 'function') {
+        return false;
+      }
+    }
+
     const router = context.router;
     const trigger = router.routeMessage(session);
     if (trigger.blockedReason) return false;
@@ -571,6 +584,15 @@ function createTopicEngagementService(options = {}) {
   }
 
   function scheduleMessageEvaluation(session, context = {}) {
+    const runtimeMode = String(context.config?.runtime?.mode || context.runtimeConfig?.runtime?.mode || '').trim().toLowerCase();
+
+    if (runtimeMode !== 'legacy' && typeof getActiveModeService === 'function') {
+      const nativeActiveMode = getActiveModeService();
+      if (nativeActiveMode && typeof nativeActiveMode.getStatus === 'function') {
+        return Promise.resolve(false);
+      }
+    }
+
     const task = new Promise((resolve) => {
       setTimeout(resolve, 0);
     })
@@ -712,6 +734,7 @@ module.exports = {
         defaultModeName: scopedConfig.defaultModeName || settingsStore.get().modeName
       },
       settingsStore,
+      getActiveModeService: () => host.getService('active-mode'),
       logger: context.logger || host.logger || console
     });
 
@@ -743,60 +766,60 @@ module.exports = {
       tools: [
         createAdminTool({
           name: 'proactive.topic.enable',
-          description: '开启高频群聊下的主动话题介入模式。',
-          aliases: ['开启主动模式', '开启主动介入', '打开主动模式'],
-          directAliases: ['开启主动模式', '开启主动介入', '打开主动模式'],
+          description: '开启高频群聊下的话题介入模式。',
+          aliases: ['开启话题介入', '打开话题介入'],
+          directAliases: ['开启话题介入', '打开话题介入'],
           service,
           config: context.config,
           handler: async ({ input, service: svc }) => {
-            const modeName = normalizeText(input.query || input.raw || '', 24);
+            const modeName = normalizeText(input.query || '', 24);
             const settings = await svc.enable(modeName);
-            return `已开启主动话题介入。\n当前模式名: ${settings.modeName}`;
+            return `已开启话题介入。\n当前模式名: ${settings.modeName}`;
           }
         }),
         createAdminTool({
           name: 'proactive.topic.disable',
-          description: '关闭主动话题介入模式。',
-          aliases: ['关闭主动模式', '关闭主动介入', '停止主动介入'],
-          directAliases: ['关闭主动模式', '关闭主动介入', '停止主动介入'],
+          description: '关闭话题介入模式。',
+          aliases: ['关闭话题介入', '停止话题介入'],
+          directAliases: ['关闭话题介入', '停止话题介入'],
           service,
           config: context.config,
           handler: async ({ service: svc }) => {
             const settings = await svc.disable();
-            return `已关闭主动话题介入。\n当前模式名: ${settings.modeName}`;
+            return `已关闭话题介入。\n当前模式名: ${settings.modeName}`;
           }
         }),
         createAdminTool({
           name: 'proactive.topic.status',
-          description: '查看主动话题介入模式状态。',
-          aliases: ['主动模式状态', '主动介入状态', '查看主动模式状态'],
-          directAliases: ['主动模式状态', '主动介入状态', '查看主动模式状态'],
+          description: '查看话题介入模式状态。',
+          aliases: ['话题介入状态', '查看话题介入状态'],
+          directAliases: ['话题介入状态', '查看话题介入状态'],
           service,
           config: context.config,
           handler: ({ service: svc }) => svc.createStatusText()
         }),
         createAdminTool({
           name: 'proactive.topic.rename',
-          description: '为主动话题介入模式命名。',
-          aliases: ['命名主动模式', '设置主动模式名', '主动模式命名'],
-          directAliases: ['命名主动模式', '设置主动模式名', '主动模式命名'],
+          description: '为话题介入模式命名。',
+          aliases: ['命名话题介入', '设置话题介入名', '话题介入命名'],
+          directAliases: ['命名话题介入', '设置话题介入名'],
           service,
           config: context.config,
           handler: async ({ input, service: svc }) => {
-            const modeName = normalizeText(input.query || input.raw || '', 24);
+            const modeName = normalizeText(input.query || '', 24);
             if (!modeName) {
-              throw new Error('请在命令后提供模式名，例如：命名主动模式 茶水间模式');
+              throw new Error('请在命令后提供模式名，例如：命名话题介入 茶水间模式');
             }
             const settings = await svc.rename(modeName);
-            return `主动话题介入模式已命名为：${settings.modeName}`;
+            return `话题介入模式已命名为：${settings.modeName}`;
           }
         })
       ],
       skills: [
         {
           id: 'proactive.topic-management',
-          name: '主动话题介入管理',
-          summary: '管理主动话题介入模式的开启、关闭、命名与状态。',
+          name: '话题介入管理',
+          summary: '管理话题介入模式的开启、关闭、命名与状态。',
           toolNames: [
             'proactive.topic.enable',
             'proactive.topic.disable',
@@ -805,7 +828,7 @@ module.exports = {
           ],
           tags: ['proactive', 'admin', 'moderation'],
           adminOnly: true,
-          examples: ['开启主动模式', '命名主动模式 茶水间模式'],
+          examples: ['开启话题介入', '命名话题介入 茶水间模式'],
           metadata: {
             priority: 55,
             pluginName: 'proactive-topic-engagement'
@@ -822,7 +845,7 @@ module.exports = {
               'proactive.topic.status',
               'proactive.topic.rename'
             ],
-            instruction: '管理员私聊时，可开启、关闭、查看或命名主动话题介入模式。'
+            instruction: '管理员私聊时，可开启、关闭、查看或命名话题介入模式。'
           }
         },
         {
