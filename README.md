@@ -58,6 +58,7 @@ npm install
   - `providers.named.<name>.baseUrl`：API 地址
   - `providers.named.<name>.apiKey`：API Key
   - `providers.named.<name>.model`：模型名
+  - `providers.named.<name>.enable`: true
   - 可选项：`endpointPath`、`timeout`、`headers`、`extraBody`、`maxTokens`
 
 > 存在 OpenClaw 的配置项，但是不建议直接上手，而是让 OpenClaw 自己调用。
